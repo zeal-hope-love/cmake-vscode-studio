@@ -599,6 +599,84 @@ export const DEFAULT_SETTINGS: AppSettings = {
 // IPC 通道名
 // ==========================================================================
 
+// --------------------------------------------------------------------------
+// CMake 构建目标与源文件（「构建目标与源文件」页）
+// --------------------------------------------------------------------------
+
+export interface SourceTargetRow {
+  name: string
+  kind: string
+  declaredLine: number
+  declaredCommand: string
+  sourceCount: number
+  includeCount: number
+  defineCount: number
+  linkCount: number
+  /** 用了 file(GLOB) 自动收集 —— 手动加文件是多余的 */
+  usesGlob: boolean
+}
+
+export interface CmakeScanResult {
+  root: string
+  cmakeFile: string
+  projectName: string | null
+  targets: SourceTargetRow[]
+  /** 根目标在构建里的源文件 */
+  inBuild: string[]
+  /** 磁盘上可编译、但整个工程都没引用到的 —— 「加入构建」的候选 */
+  orphans: string[]
+  /** 写了但磁盘上没有的 */
+  missing: Array<{ relPath: string; raw: string; line: number }>
+  stats: {
+    compilableOnDisk: number
+    headersOnDisk: number
+    referencedProjectWide: number
+    cmakeListsCount: number
+  }
+  diagnostics: string[]
+  /** 展不开变量的条目（认不出是哪个文件），界面上灰着显示 */
+  unresolved: Array<{ raw: string; line: number }>
+}
+
+export interface CmakeChangeRequest {
+  root: string
+  targetName: string
+  add?: string[]
+  remove?: string[]
+}
+
+export interface CmakeChangePreview {
+  file: string
+  relativePath: string
+  before: string
+  after: string
+  notes: string[]
+  added: string[]
+  removed: string[]
+  /** 用了「文件末尾托管区块」而不是就地插入 */
+  usedFallback: boolean
+  changed: boolean
+}
+
+export interface CmakeApplyResult {
+  ok: boolean
+  file: string
+  added: string[]
+  removed: string[]
+  notes: string[]
+  usedFallback: boolean
+  snapshotId: string | null
+  errors: string[]
+}
+
+export type NewFileKind = 'c' | 'h' | 'cpp' | 'task-c' | 'task-h'
+
+export interface CreateSourceFileResult {
+  ok: boolean
+  relPath: string
+  absPath: string
+  error?: string
+}
 export const IPC = {
   settingsGet: 'settings:get',
   settingsSave: 'settings:save',
@@ -625,6 +703,11 @@ export const IPC = {
   snapshotRestore: 'snapshot:restore',
   configClear: 'config:clear',
   projectCleanArtifacts: 'project:clean-artifacts',
+
+  cmakeScan: 'cmake:scan',
+  cmakePreview: 'cmake:preview',
+  cmakeApply: 'cmake:apply',
+  cmakeCreateFile: 'cmake:create-file',
 
   templateList: 'template:list',
   templateSave: 'template:save',
@@ -685,6 +768,19 @@ export interface StudioApi {
   clearVscodeConfig(projectRoot: string): Promise<ClearResult>
   /** 清理构建目录里的陈旧产物；主进程会逐个校验路径与后缀 */
   cleanArtifacts(projectRoot: string, relativePaths: string[]): Promise<CleanArtifactsResult>
+
+  /** 读工程的 CMake 目标与源文件，并找出「磁盘上有但没进构建」的 */
+  cmakeScan(projectRoot: string): Promise<CmakeScanResult>
+  /** 算出加/删源文件之后的 CMakeLists 全文（不落盘） */
+  cmakePreview(req: CmakeChangeRequest): Promise<CmakeChangePreview>
+  /** 落盘（先存快照）+ 记历史 */
+  cmakeApply(req: CmakeChangeRequest): Promise<CmakeApplyResult>
+  /** 新建一个源码文件（骨架），不自动加入构建 */
+  cmakeCreateFile(
+    projectRoot: string,
+    relPath: string,
+    kind: NewFileKind
+  ): Promise<CreateSourceFileResult>
 
   listTemplates(): Promise<ConfigTemplate[]>
   saveTemplate(template: ConfigTemplate): Promise<ConfigTemplate[]>

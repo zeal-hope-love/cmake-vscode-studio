@@ -7,6 +7,12 @@
 
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { spawn } from 'node:child_process'
+import {
+  applySourceChange,
+  createSourceFile,
+  previewSourceChange,
+  scanSources
+} from './services/sourceScanner'
 import { existsSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -17,9 +23,15 @@ import {
   type BatchResult,
   type CleanArtifactsResult,
   type ClearResult,
+  type CmakeApplyResult,
+  type CmakeChangePreview,
+  type CmakeChangeRequest,
+  type CmakeScanResult,
   type ConfigTemplate,
+  type CreateSourceFileResult,
   type GenOptions,
   type HistoryEntry,
+  type NewFileKind,
   type PlanRequest,
   type ProjectLoadResult,
   type RestoreResult,
@@ -326,6 +338,25 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
 
       return { removed, errors, freedBytes }
     }
+  )
+
+  // ---- CMake 构建目标与源文件 --------------------------------------------
+  //
+  // 这是**唯一会改到自己手写的构建脚本**的一组接口，所以每一步都留了退路：
+  //   cmakeScan    只读，扫目标 + 找出「磁盘上有但没进构建」的
+  //   cmakePreview 只算不写，返回改前改后全文给界面做 diff
+  //   cmakeApply   写之前先存快照，历史里能一键还原
+  //   cmakeCreateFile 建骨架文件（不自动加进构建，加不加由用户在界面上点）
+  ipcMain.handle(IPC.cmakeScan, async (_e, projectRoot: string) => scanSources(projectRoot))
+
+  ipcMain.handle(IPC.cmakePreview, async (_e, req: CmakeChangeRequest) => previewSourceChange(req))
+
+  ipcMain.handle(IPC.cmakeApply, async (_e, req: CmakeChangeRequest) => applySourceChange(req))
+
+  ipcMain.handle(
+    IPC.cmakeCreateFile,
+    async (_e, projectRoot: string, relPath: string, kind: NewFileKind) =>
+      createSourceFile(projectRoot, relPath, kind)
   )
 
   // ---- 模板 -------------------------------------------------------------

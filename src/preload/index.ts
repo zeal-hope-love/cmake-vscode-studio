@@ -13,7 +13,13 @@ import {
   type BatchResult,
   type CleanArtifactsResult,
   type ClearResult,
+  type CmakeApplyResult,
+  type CmakeChangePreview,
+  type CmakeChangeRequest,
+  type CmakeScanResult,
   type ConfigTemplate,
+  type CreateSourceFileResult,
+  type NewFileKind,
   type GenOptions,
   type HistoryEntry,
   type PlanRequest,
@@ -84,11 +90,25 @@ const api: StudioApi = {
   clearVscodeConfig: (projectRoot) =>
     ipcRenderer.invoke(IPC.configClear, projectRoot) as Promise<ClearResult>,
   cleanArtifacts: (projectRoot, relativePaths) =>
+    ipcRenderer.invoke(IPC.projectCleanArtifacts, projectRoot, relativePaths),
+
+  // ---- CMake 构建目标与源文件 ----
+  cmakeScan: (projectRoot) =>
+    ipcRenderer.invoke(IPC.cmakeScan, projectRoot) as Promise<CmakeScanResult>,
+
+  cmakePreview: (req: CmakeChangeRequest) =>
+    ipcRenderer.invoke(IPC.cmakePreview, req) as Promise<CmakeChangePreview>,
+
+  cmakeApply: (req: CmakeChangeRequest) =>
+    ipcRenderer.invoke(IPC.cmakeApply, req) as Promise<CmakeApplyResult>,
+
+  cmakeCreateFile: (projectRoot, relPath, kind: NewFileKind) =>
     ipcRenderer.invoke(
-      IPC.projectCleanArtifacts,
+      IPC.cmakeCreateFile,
       projectRoot,
-      relativePaths
-    ) as Promise<CleanArtifactsResult>,
+      relPath,
+      kind
+    ) as Promise<CreateSourceFileResult>,
 
   listTemplates: () => ipcRenderer.invoke(IPC.templateList) as Promise<ConfigTemplate[]>,
   saveTemplate: (template) =>

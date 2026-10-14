@@ -13,6 +13,7 @@ import { PreviewModal } from './components/PreviewModal'
 import { Onboarding } from './components/Onboarding'
 import { Alert, Button, EmptyState, PageBody } from './components/ui'
 import ProjectPage from './pages/ProjectPage'
+import SourcesPage from './pages/SourcesPage'
 import LaunchPage from './pages/LaunchPage'
 import TasksPage from './pages/TasksPage'
 import SettingsPage from './pages/SettingsPage'
@@ -26,6 +27,7 @@ import BuildPage from './pages/BuildPage'
 
 const PAGES: Record<PageKey, () => React.JSX.Element> = {
   project: ProjectPage,
+  sources: SourcesPage,
   launch: LaunchPage,
   tasks: TasksPage,
   settings: SettingsPage,

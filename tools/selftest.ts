@@ -18,6 +18,9 @@ import { join } from 'node:path'
 import { DEFAULT_SETTINGS, type AppSettings } from '@shared/types'
 import { defaultGenOptions, generateBundle } from '../src/main/services/generators'
 import { scanProject } from '../src/main/services/scanner'
+import { buildCmakeModel, collectReferencedPaths } from '../src/main/services/cmakeModel'
+import { planSourceEdit } from '../src/main/services/cmakeEdit'
+import { scanSources, renderNewFile } from '../src/main/services/sourceScanner'
 import { detectTools, findSvdFile } from '../src/main/services/toolDetector'
 import { planFiles, writeFiles } from '../src/main/services/writer'
 import {
@@ -969,6 +972,205 @@ if (!openocdExe) {
     'OpenOCD 成功初始化，或明确报告硬件侧不可用（没插/没响应/被占用）',
     res.status === 0 || adapterUnusable,
     `exit=${res.status}`
+  )
+}
+
+// ==========================================================================
+// 10. CMake 目标与源文件：位置感知解析 + 加/删源文件
+// ==========================================================================
+
+section('10. CMake 构建目标与源文件')
+
+{
+  const proj = join(sandbox, 'cmake-src')
+  mkdirSync(join(proj, 'application'), { recursive: true })
+  mkdirSync(join(proj, 'components'), { recursive: true })
+  mkdirSync(join(proj, 'cmake', 'mx'), { recursive: true })
+
+  const CMAKE_SRC = `cmake_minimum_required(VERSION 3.22)
+
+set(CMAKE_PROJECT_NAME demo_robot)
+project(\${CMAKE_PROJECT_NAME})
+
+add_executable(\${CMAKE_PROJECT_NAME})
+
+add_subdirectory(cmake/mx)
+
+# 源文件都在这个列表里
+target_sources(\${CMAKE_PROJECT_NAME} PRIVATE
+    \${CMAKE_CURRENT_SOURCE_DIR}/application/main.c
+    \${CMAKE_CURRENT_SOURCE_DIR}/application/gimbal_task.c
+    \${CMAKE_CURRENT_SOURCE_DIR}/components/pid.c
+)
+
+set(EXTRA_SRcs \${CMAKE_CURRENT_SOURCE_DIR}/components/fifo.c)
+
+target_include_directories(\${CMAKE_PROJECT_NAME} PRIVATE
+    \${CMAKE_CURRENT_SOURCE_DIR}/application
+    \${CMAKE_CURRENT_SOURCE_DIR}/components
+)
+
+target_compile_definitions(\${CMAKE_PROJECT_NAME} PRIVATE ARM_MATH_CM4)
+
+# 另一个文件用了变量列表 —— 展开后是 a;b;c，必须按分号拆开，否则只算一个源文件
+target_sources(\${CMAKE_PROJECT_NAME} PRIVATE \${EXTRA_SRcs})
+`
+
+  // 子目录：路径写成 ${CMAKE_CURRENT_SOURCE_DIR}/../../Drivers/xxx.c
+  // 曾经的坑：见到 ${ 就跳过 → 这些文件全被误判成「没进构建」
+  const CMAKE_SUB = `add_library(STM32_Drivers OBJECT)
+set(STM32_Drivers_Src
+    \${CMAKE_CURRENT_SOURCE_DIR}/../../application/driver_a.c
+    \${CMAKE_CURRENT_SOURCE_DIR}/../../application/driver_b.c
+)
+target_sources(STM32_Drivers PRIVATE \${STM32_Drivers_Src})
+`
+
+  writeFileSync(join(proj, 'CMakeLists.txt'), CMAKE_SRC, 'utf8')
+  writeFileSync(join(proj, 'cmake', 'mx', 'CMakeLists.txt'), CMAKE_SUB, 'utf8')
+  for (const f of [
+    'application/main.c',
+    'application/gimbal_task.c',
+    'application/driver_a.c',
+    'application/driver_b.c',
+    'components/pid.c',
+    'components/fifo.c',
+    // 这个只在磁盘上、没写进任何 CMakeLists —— 应该被找出来
+    'application/orphan.c',
+    // 头文件不该被算成「没进构建」
+    'application/main.h'
+  ]) {
+    writeFileSync(join(proj, ...f.split('/')), 'int x;\n', 'utf8')
+  }
+
+  const cmakeFile = join(proj, 'CMakeLists.txt')
+  const original = readFileSync(cmakeFile, 'utf8')
+
+  // ---- 解析 ----
+  const model = buildCmakeModel(cmakeFile, proj)
+  check('CMake: 解析出工程名', model.projectName === 'demo_robot', String(model.projectName))
+
+  const rootTarget = model.targets.find((t) => t.kind === 'executable')
+  check('CMake: 找到可执行目标', Boolean(rootTarget), model.targets.map((t) => t.name).join(', '))
+  check(
+    'CMake: ${CMAKE_CURRENT_SOURCE_DIR} 能展开，源文件不是 0 个',
+    (rootTarget?.sources.length ?? 0) === 4,
+    String(rootTarget?.sources.length)
+  )
+  check(
+    'CMake: 变量列表按 ; 拆开（EXTRA_SRcs 那条要算进 fifo.c）',
+    Boolean(rootTarget?.sources.some((s) => s.relPath === 'components/fifo.c')),
+    rootTarget?.sources.map((s) => s.relPath).join(', ')
+  )
+  check(
+    'CMake: include 目录解析正确',
+    (rootTarget?.includeDirs.length ?? 0) === 2,
+    String(rootTarget?.includeDirs.length)
+  )
+  check('CMake: define 解析正确', (rootTarget?.defines.length ?? 0) === 1)
+
+  // ---- 全工程引用收集 ----
+  const ref = collectReferencedPaths(proj)
+  check(
+    'CMake: 子目录里的 ${CMAKE_CURRENT_SOURCE_DIR}/../.. 路径也收得到',
+    ref.sources.has('application/driver_a.c') && ref.sources.has('application/driver_b.c'),
+    [...ref.sources].join(', ')
+  )
+  check('CMake: 找到了 2 个 CMakeLists', ref.dirs.length === 2, String(ref.dirs.length))
+
+  // ---- 找出「没进构建」的 ----
+  const scan = scanSources(proj)
+  check(
+    'CMake: 只有 orphan.c 被判定为「没进构建」',
+    scan.orphans.length === 1 && scan.orphans[0] === 'application/orphan.c',
+    scan.orphans.join(', ')
+  )
+  check(
+    'CMake: 头文件不算「没进构建」',
+    !scan.orphans.some((o) => o.endsWith('.h')),
+    scan.orphans.join(', ')
+  )
+
+  // ---- 加入 ----
+  const addPlan = planSourceEdit(model, {
+    targetName: 'demo_robot',
+    add: ['application/orphan.c']
+  })
+  check('CMake: 加入时找到了就地插入点', !addPlan.usedFallback, addPlan.notes.join(' | '))
+  check(
+    'CMake: 加入后原文多了一行、且包含新路径',
+    addPlan.after.split('\n').length === original.split('\n').length + 1 &&
+      addPlan.after.includes('application/orphan.c'),
+    `+${addPlan.after.split('\n').length - original.split('\n').length} 行`
+  )
+  check(
+    'CMake: 加入只动了一行（字符差 = 换行 + 缩进 + 路径）',
+    addPlan.after.length - original.length === 1 + 4 + 'application/orphan.c'.length,
+    String(addPlan.after.length - original.length)
+  )
+
+  writeFileSync(cmakeFile, addPlan.after, 'utf8')
+  const reparsed = buildCmakeModel(cmakeFile, proj)
+  const added = reparsed.targets
+    .find((t) => t.kind === 'executable')
+    ?.sources.find((s) => s.relPath === 'application/orphan.c')
+  check('CMake: 写入后重新解析能读到新文件', Boolean(added), String(added?.line))
+  check('CMake: 重新扫描后「没进构建」清空', scanSources(proj).orphans.length === 0)
+
+  // ---- 移除 + 幂等 ----
+  const rmPlan = planSourceEdit(reparsed, {
+    targetName: 'demo_robot',
+    remove: ['application/orphan.c']
+  })
+  writeFileSync(cmakeFile, rmPlan.after, 'utf8')
+  check(
+    'CMake: 加完再删能逐字节回到原文件（编辑可逆，不累积垃圾）',
+    readFileSync(cmakeFile, 'utf8') === original,
+    `差 ${Math.abs(readFileSync(cmakeFile, 'utf8').length - original.length)} 字符`
+  )
+
+  // ---- 重复加不会写两遍 ----
+  // 注意：planSourceEdit 每次都从磁盘重读，所以这里要拿**当前**内容的模型，
+  // 不能用上面那份最初的 model，否则比对的基准对不上。
+  const fresh = buildCmakeModel(cmakeFile, proj)
+  const dup = planSourceEdit(fresh, { targetName: 'demo_robot', add: ['application/main.c'] })
+  check(
+    'CMake: 已经在构建里的文件不会重复加',
+    dup.added.length === 0 && dup.after === original,
+    dup.notes.join(' | ')
+  )
+
+  // ---- 目标不存在时不乱动 ----
+  const noTarget = planSourceEdit(fresh, { targetName: '不存在的目标', add: ['x.c'] })
+  check('CMake: 目标不存在时不乱改，只给提示', noTarget.after === original)
+
+  // ---- file(GLOB) 提示 ----
+  const globProj = join(sandbox, 'cmake-glob')
+  mkdirSync(globProj, { recursive: true })
+  writeFileSync(
+    join(globProj, 'CMakeLists.txt'),
+    `project(g)\nfile(GLOB SRC CONFIGURE_DEPENDS src/*.c)\nadd_executable(g \${SRC})\n`,
+    'utf8'
+  )
+  const globModel = buildCmakeModel(join(globProj, 'CMakeLists.txt'), globProj)
+  check(
+    'CMake: 识别 file(GLOB) 并给出「不用手动加」的提示',
+    globModel.diagnostics.some((d) => d.includes('GLOB')),
+    globModel.diagnostics.join(' | ')
+  )
+
+  // ---- 新建文件的骨架 ----
+  const skeleton = renderNewFile('task-c', 'application/oled_task.c')
+  check(
+    'CMake: 任务骨架带任务函数和创建提示',
+    skeleton.includes('void oled_task(void const *argument)') && skeleton.includes('osThreadCreate'),
+    skeleton.slice(0, 60)
+  )
+  const header = renderNewFile('h', 'application/oled_task.h')
+  check(
+    'CMake: 头文件骨架带正确的 include guard',
+    header.includes('#ifndef OLED_TASK_H') && header.includes('#define OLED_TASK_H'),
+    header.slice(0, 60)
   )
 }
 

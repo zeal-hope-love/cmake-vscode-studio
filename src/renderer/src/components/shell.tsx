@@ -21,6 +21,7 @@ import { ResizeHandle, useStoredWidth } from './Resizable'
  */
 const NAV: Array<{ page: PageKey; label: string; icon: () => React.JSX.Element; group: string }> = [
   { page: 'project', label: '工程总览', icon: Icons.project, group: '工程' },
+  { page: 'sources', label: '构建目标与源文件', icon: Icons.tasks, group: '工程' },
   { page: 'launch', label: '调试 launch.json', icon: Icons.debug, group: '工程' },
   { page: 'tasks', label: '任务 tasks.json', icon: Icons.tasks, group: '工程' },
   { page: 'settings', label: '设置 settings.json', icon: Icons.settings, group: '工程' },
