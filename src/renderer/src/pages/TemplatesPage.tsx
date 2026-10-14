@@ -433,7 +433,7 @@ export default function TemplatesPage(): React.JSX.Element {
                 <TextInput
                   mono
                   value={rootDraft}
-                  placeholder="例如 C:\\Users\\someone\\Desktop\\STM32\\SBV"
+                  placeholder="例如 D:\\work\\my-firmware"
                   onChange={(e) => setRootDraft(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') addRoot(rootDraft)

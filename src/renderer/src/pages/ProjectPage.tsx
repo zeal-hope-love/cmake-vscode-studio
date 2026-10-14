@@ -170,7 +170,7 @@ export default function ProjectPage(): React.JSX.Element {
                     <TextInput
                       mono
                       value={pathInput}
-                      placeholder="例如 C:\\Users\\someone\\Desktop\\STM32\\SBV"
+                      placeholder="例如 D:\\work\\my-firmware"
                       onChange={(e) => setPathInput(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && pathInput.trim()) void loadProject(pathInput.trim())

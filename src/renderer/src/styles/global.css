@@ -137,16 +137,14 @@ textarea {
   letter-spacing: 0.2px;
 }
 
+/* 品牌标记：图形由 <LogoMark /> 这个 SVG 提供（和 resources/icon.ico 同一套几何），
+   这里只负责占位和对齐。 */
 .titlebar__mark {
   width: 18px;
   height: 18px;
-  border-radius: 5px;
-  background: linear-gradient(135deg, var(--accent), #7c5cff);
   display: grid;
   place-items: center;
-  font-size: 11px;
-  color: #fff;
-  font-weight: 700;
+  flex: 0 0 auto;
 }
 
 /* 标题栏里的版本号，鼠标悬停有完整信息 */

@@ -9,7 +9,7 @@
 import React from 'react'
 import { themeLabel, useStudio } from '../state/store'
 import { Button, Select } from './ui'
-import { Icons } from './icons'
+import { Icons, LogoMark } from './icons'
 import type { AppSettings } from '@shared/types'
 
 export function TitleBar(): React.JSX.Element {
@@ -32,7 +32,9 @@ export function TitleBar(): React.JSX.Element {
             : 'CMake / VSCode 工程配置器'
         }
       >
-        <span className="titlebar__mark">C</span>
+        <span className="titlebar__mark">
+          <LogoMark />
+        </span>
         <span>CMake / VSCode 工程配置器</span>
         {appInfo && <span className="titlebar__version">v{appInfo.version}</span>}
       </div>

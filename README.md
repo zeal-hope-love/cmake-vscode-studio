@@ -1,3 +1,5 @@
+<img src="resources/icon.png" width="76" alt="图标">
+
 # CMake / VSCode 工程配置器
 
 **自动读懂一个 CMake 工程，然后把它在 VSCode 里跑起来所需要的 `.vscode` 配置全部生成好。**
@@ -306,10 +308,15 @@ ${probeLabel}  ${projectRoot}
 
 **可以直接覆盖升级，用户数据不会丢。**
 
+![安装向导](docs/screenshots/13-installer.png)
+
 | 方式 | 怎么升级 |
 | --- | --- |
 | 安装版（`-x64.exe`） | 直接下载新版本运行，选**同一个安装目录**即可覆盖。`appId` 不变，卸载信息会更新 |
 | 免安装版（`-portable.exe`） | 直接用新文件覆盖旧文件 |
+
+安装时会创建桌面和开始菜单快捷方式（名字是 **CMake VSCode 工程配置器**），
+「应用和功能」里显示的名字也是它。
 
 **数据目录**：`%APPDATA%\CMake-VSCode-Configurator\`
 

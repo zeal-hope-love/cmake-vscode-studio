@@ -128,3 +128,46 @@ export const Icons = {
     </Svg>
   )
 }
+
+/**
+ * 品牌标记 —— 和 resources/icon.ico 是同一个形状：蓝色斜向渐变圆角方块 + 白色几何 C。
+ *
+ * C 是一条**等宽环段**（外圆减内圆，两端沿半径平切），不是字体 ——
+ * 所以换台机器、换个系统字体都不会变形，和 tools/make-icons.py 画出来的完全一致。
+ * 下面这些比例常数必须和那个脚本里的 C_R_OUTER / C_STROKE / C_GAP_DEG 对得上。
+ */
+export function LogoMark({ size = 18 }: { size?: number }): React.JSX.Element {
+  // 都在 24x24 的 viewBox 里算
+  const S = 24
+  const c = S / 2
+  const rOut = S * 0.3
+  const rIn = rOut - S * 0.185
+  const gap = 42
+  const a0 = (gap * Math.PI) / 180
+  const a1 = ((360 - gap) * Math.PI) / 180
+
+  const pt = (angle: number, r: number): string =>
+    `${(c + r * Math.cos(angle)).toFixed(2)} ${(c + r * Math.sin(angle)).toFixed(2)}`
+
+  // 外弧顺时针走 276 度，再沿半径切进去，内弧逆时针走回来，闭合
+  const d = [
+    `M ${pt(a0, rOut)}`,
+    `A ${rOut} ${rOut} 0 1 1 ${pt(a1, rOut)}`,
+    `L ${pt(a1, rIn)}`,
+    `A ${rIn} ${rIn} 0 1 0 ${pt(a0, rIn)}`,
+    'Z'
+  ].join(' ')
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${S} ${S}`} aria-hidden="true">
+      <defs>
+        <linearGradient id="cvs-logo-grad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#4f8ef7" />
+          <stop offset="1" stopColor="#7c5cff" />
+        </linearGradient>
+      </defs>
+      <rect width={S} height={S} rx={S * 0.22} fill="url(#cvs-logo-grad)" />
+      <path d={d} fill="#ffffff" />
+    </svg>
+  )
+}

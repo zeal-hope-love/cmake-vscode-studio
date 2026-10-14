@@ -57,6 +57,16 @@ function createWindow(): void {
     minHeight: 700,
     show: false,
     title: 'CMake / VSCode 工程配置器',
+    /**
+     * 窗口 / 任务栏图标。
+     *
+     * 打包后 exe 自带图标（electron-builder 从 resources/icon.ico 嵌进去），
+     * 但**开发模式下用的是 Electron 的默认图标** —— 看着不像自己的应用，
+     * 所以这里显式指一下。打包后走 extraResources 复制进来的那一份。
+     */
+    icon: app.isPackaged
+      ? join(process.resourcesPath, 'icon.png')
+      : join(__dirname, '../../resources/icon.png'),
     backgroundColor: colors.bg,
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',

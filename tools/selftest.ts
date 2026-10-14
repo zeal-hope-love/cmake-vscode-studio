@@ -178,7 +178,11 @@ for (const root of REAL_PROJECTS) {
   check(`${info.name}: 定位到工程根`, info.root.toLowerCase() === root.toLowerCase())
 }
 
-check('至少检测到一个真实工程', realScanned > 0, `实际 ${realScanned} 个`)
+// 只有真的配了工程才断言 —— 没配环境变量时整段跳过，
+// 不能因为「没给路径」就报失败，那是使用者的选择，不是代码的问题。
+if (REAL_PROJECTS.length > 0) {
+  check('至少检测到一个真实工程', realScanned > 0, `实际 ${realScanned} 个`)
+}
 
 // ==========================================================================
 // 3. 合成工程完整流程

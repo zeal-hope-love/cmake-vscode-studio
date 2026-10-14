@@ -21,6 +21,12 @@ files:
   - out/**/*
   - package.json
 
+# 窗口图标要在运行时读，所以复制到 resources/ 根下（asar 外面）。
+# 打包后主进程从 process.resourcesPath/icon.png 取。
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+
 win:
   target:
     - target: nsis
@@ -29,8 +35,9 @@ win:
     - target: portable
       arch: [x64]
   artifactName: ${productName}-${version}-${arch}.${ext}
-  # 想放自定义图标：把 icon.ico 放进 resources/ 即可（256x256 起）
-  # icon: resources/icon.ico
+  # 应用图标：exe、任务栏、开始菜单、桌面快捷方式都用它。
+  # 由 tools/make-icons.py 生成（多尺寸 16/24/32/48/64/128/256，每个尺寸独立渲染）。
+  icon: resources/icon.ico
 
   # ---------------------------------------------------------------------------
   # 代码签名
@@ -72,7 +79,23 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: CMake / VSCode 工程配置器
+  # 快捷方式的文件名。**不能带斜杠** —— `CMake / VSCode 工程配置器` 这种写法
+  # Windows 建不出 .lnk（/ 在文件名里非法），结果是桌面和开始菜单里什么都没有，
+  # 而且打包时不报错，很难发现。真要显示斜杠只能走 uninstallDisplayName 那种纯显示字符串。
+  shortcutName: CMake VSCode 工程配置器
+  # 「应用和功能」/「程序和功能」里显示的名字。
+  # 只影响显示文字，不影响安装目录和用户数据目录 —— 那两个由 productName 决定，
+  # 改了会让老用户丢配置，所以别动 productName。
+  uninstallDisplayName: CMake / VSCode 工程配置器
+  # 安装器自身的图标（安装包 exe 图标、向导窗口、卸载器）
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
+  installerHeaderIcon: resources/icon.ico
+  # 向导内页右上角的小图（150x57 BMP）+ 欢迎/完成页左侧的竖图（164x314 BMP）。
+  # NSIS 只吃 BMP 且没有透明度，所以页头图是白底 —— 正好和向导的白色页头融为一体。
+  # 这两张图由 tools/make-icons.py 生成。
+  installerHeader: resources/installerHeader.bmp
+  installerSidebar: resources/installerSidebar.bmp
   # 2052 = 简体中文
   language: "2052"
 
