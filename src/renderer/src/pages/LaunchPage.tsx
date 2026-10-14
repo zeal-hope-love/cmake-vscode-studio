@@ -25,6 +25,7 @@ import {
   TextArea,
   TextInput
 } from '../components/ui'
+import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
 import { SplitPane } from '../components/Resizable'
 
@@ -148,9 +149,9 @@ export default function LaunchPage(): React.JSX.Element {
   if (!bundle || !project) {
     return (
       <>
-        <PageHeader title="调试配置 launch.json" />
+        <PageHeader title="调试配置 launch.json" subtitle="还没有选择工程" />
         <PageBody>
-          <EmptyState title="请先载入工程" />
+          <NoProject reason="调试配置要从工程里读固件名、芯片型号和 OpenOCD 接线方式。" />
         </PageBody>
       </>
     )

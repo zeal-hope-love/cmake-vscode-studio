@@ -21,6 +21,7 @@ import {
   PageHeader,
   Spinner
 } from '../components/ui'
+import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
 import type { ProjectIssueFix } from '@shared/types'
 
@@ -46,14 +47,9 @@ export default function InspectPage(): React.JSX.Element {
   if (!project) {
     return (
       <>
-        <PageHeader title="检查与清理" subtitle="检测到的问题、以及会动文件的清理操作" />
+        <PageHeader title="检查与清理" subtitle="还没有选择工程" />
         <PageBody>
-          <EmptyState title="请先载入工程">
-            <div className="mb-12">这一页的内容都依赖具体工程。</div>
-            <Button variant="primary" onClick={() => setPage('project')}>
-              去工程总览
-            </Button>
-          </EmptyState>
+          <NoProject reason="陈旧产物、快照备份这些都是针对具体工程的。" />
         </PageBody>
       </>
     )

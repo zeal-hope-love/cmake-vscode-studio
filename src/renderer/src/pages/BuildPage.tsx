@@ -17,6 +17,7 @@ import {
   Select,
   TextInput
 } from '../components/ui'
+import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
 
 type Variant = 'Debug' | 'Release'
@@ -51,9 +52,9 @@ export default function BuildPage(): React.JSX.Element {
   if (!project || !options || !bundle) {
     return (
       <>
-        <PageHeader title="构建与烧录" />
+        <PageHeader title="构建与烧录" subtitle="还没有选择工程" />
         <PageBody>
-          <EmptyState title="请先载入工程" />
+          <NoProject reason="构建和烧录要用工程里的 CMake preset、构建目录和烧录命令。" />
         </PageBody>
       </>
     )

@@ -367,7 +367,11 @@ export default function TemplatesPage(): React.JSX.Element {
                     size="sm"
                     disabled={!project || applyingId === t.id}
                     onClick={() => void onApply(t)}
-                    title={project ? '用这个模板的参数重新检测当前工程' : '请先载入工程'}
+                    title={
+                      project
+                        ? '用这个模板的参数重新检测当前工程'
+                        : '还没有选择工程，先去「工程总览」选一个'
+                    }
                   >
                     {applyingId === t.id ? <Spinner /> : null}
                     套用

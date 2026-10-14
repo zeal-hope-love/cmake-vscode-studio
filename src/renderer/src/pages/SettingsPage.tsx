@@ -28,6 +28,7 @@ import {
   TextArea,
   TextInput
 } from '../components/ui'
+import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
 
 /** VSCode 的工程根变量，写进配置里统一用它 */
@@ -197,11 +198,9 @@ export default function SettingsPage(): React.JSX.Element {
   if (!bundle) {
     return (
       <>
-        <PageHeader title="设置 settings.json" subtitle="工作区设置" />
+        <PageHeader title="设置 settings.json" subtitle="还没有选择工程" />
         <PageBody>
-          <EmptyState title="请先载入工程">
-            载入工程后这里会列出生成的 .vscode/settings.json 的全部键值对。
-          </EmptyState>
+          <NoProject reason="设置项里的 OpenOCD 路径、cmake 配置都由工程检测结果填出来。" />
         </PageBody>
       </>
     )

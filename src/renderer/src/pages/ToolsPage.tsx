@@ -30,6 +30,7 @@ import {
   Spinner,
   TextInput
 } from '../components/ui'
+import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
 import { PROBE_OPTIONS, probeByKey } from '@shared/probes'
 import {
@@ -485,7 +486,7 @@ export default function ToolsPage(): React.JSX.Element {
 
   const needProjectCard = (title: string, text: string): React.JSX.Element => (
     <Card title={title}>
-      <EmptyState title="需要先载入工程">{text}</EmptyState>
+      <NoProject reason={text} />
     </Card>
   )
 

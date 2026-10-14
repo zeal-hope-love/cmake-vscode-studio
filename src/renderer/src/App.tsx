@@ -6,7 +6,7 @@
  */
 
 import React from 'react'
-import { PAGES_BLOCKED_WITHOUT_PROJECT, useStudio, type PageKey } from './state/store'
+import { useStudio, type PageKey } from './state/store'
 import { TitleBar } from './components/TitleBar'
 import { Sidebar, StatusBar, ToastHost } from './components/shell'
 import { PreviewModal } from './components/PreviewModal'
@@ -57,9 +57,6 @@ export default function App(): React.JSX.Element {
   React.useEffect(() => bindWriteProgress(), [bindWriteProgress])
 
   const Page = PAGES[activePage]
-  // 只有「自身没有空状态处理」的页面才在外壳拦；其余交给页面自己渲染，
-  // 这样它们自己的空状态和说明内容（比如任务页的 VSCode 用法提示）不会丢
-  const blocked = !projectRoot && PAGES_BLOCKED_WITHOUT_PROJECT.includes(activePage)
 
   return (
     <div className="app">
@@ -69,23 +66,12 @@ export default function App(): React.JSX.Element {
         <Sidebar />
 
         <main className="main">
-          {blocked ? (
-            <PageBody>
-              <EmptyState title="还没有选择工程">
-                <div className="mb-12">
-                  这一页要读工程里的文件。先到「工程总览」页选一个 CMake 工程， 或者直接点下面按钮。
-                </div>
-                <div className="flex" style={{ justifyContent: 'center' }}>
-                  <Button variant="primary" onClick={() => void browseProject()}>
-                    选择工程目录…
-                  </Button>
-                  <Button onClick={() => setPage('project')}>去工程总览</Button>
-                </div>
-              </EmptyState>
-            </PageBody>
-          ) : (
-            <Page />
-          )}
+          {/*
+            「还没有选择工程」不再由外壳拦截整页 —— 每个需要工程的页面
+            都会先渲染自己的 PageHeader，正文用统一的 <NoProject />。
+            外壳拦的话页面标题会丢，而且和页面自己的空状态长得不一样。
+          */}
+          <Page />
 
           {errorText && (
             <div style={{ padding: '0 18px 12px' }}>

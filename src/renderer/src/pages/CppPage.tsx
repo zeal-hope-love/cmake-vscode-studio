@@ -23,6 +23,7 @@ import {
   TextArea,
   TextInput
 } from '../components/ui'
+import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
 import { SplitPane } from '../components/Resizable'
 
@@ -180,11 +181,9 @@ export default function CppPage(): React.JSX.Element {
   if (!bundle) {
     return (
       <>
-        <PageHeader title="IntelliSense c_cpp_properties.json" subtitle="C/C++ 智能感知配置" />
+        <PageHeader title="IntelliSense c_cpp_properties.json" subtitle="还没有选择工程" />
         <PageBody>
-          <EmptyState title="请先载入工程">
-            载入工程后这里会列出生成的 .vscode/c_cpp_properties.json 的每一组配置。
-          </EmptyState>
+          <NoProject reason="头文件路径和宏定义要从工程的 CMakeLists 里解析出来。" />
         </PageBody>
       </>
     )
@@ -272,7 +271,7 @@ export default function CppPage(): React.JSX.Element {
     const b = state.bundle
     const p = state.project
     if (!b || !p) {
-      state.notify('warn', '请先载入工程')
+      state.notify('warn', '还没有选择工程')
       return
     }
     const o = state.options

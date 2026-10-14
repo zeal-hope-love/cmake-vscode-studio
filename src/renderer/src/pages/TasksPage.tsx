@@ -21,6 +21,7 @@ import {
   TextArea,
   TextInput
 } from '../components/ui'
+import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
 import { SplitPane } from '../components/Resizable'
 
@@ -189,19 +190,14 @@ export default function TasksPage(): React.JSX.Element {
   if (!bundle) {
     return (
       <>
-        <PageHeader title="任务 tasks.json" subtitle="还没有载入工程" />
+        <PageHeader title="任务 tasks.json" subtitle="还没有选择工程" />
         <PageBody>
           {/*
-            这张提示卡放到这里也要有：没载入工程时点进来是空状态，
-            如果只有空状态，用户根本不知道这一页是干嘛的。
+            这里**不放** <VscodeUsageHint /> —— 那张卡是给「任务已经生成好、但不知道
+            按哪个键」的人看的。没工程时它只会把「选择工程」按钮挤到折叠线以下，
+            还让这一页的空状态和别的页面长得不一样。空状态本身已经说明了这页干嘛。
           */}
-          <VscodeUsageHint />
-          <EmptyState title="请先载入工程">
-            <div className="mb-12">
-              任务内容要按工程生成（构建目录、preset 名、烧录命令都来自工程）。
-              先到「工程总览」页选一个工程。
-            </div>
-          </EmptyState>
+          <NoProject reason="任务内容要按工程生成（构建目录、preset 名、烧录命令都来自工程）。" />
         </PageBody>
       </>
     )

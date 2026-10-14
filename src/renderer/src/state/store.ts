@@ -56,7 +56,6 @@ export type PageKey =
  * （比如任务页的「在 VSCode 里怎么用」）—— 在外壳一刀切拦掉，
  * 那些内容就永远看不到了。
  */
-export const PAGES_BLOCKED_WITHOUT_PROJECT: readonly PageKey[] = ['launch', 'build']
 
 export type BundleSection = 'launch' | 'tasks' | 'settings' | 'cpp'
 
