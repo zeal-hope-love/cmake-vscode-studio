@@ -1,0 +1,83 @@
+# CMake / VSCode 工程配置器 —— 打包配置
+# 文档：docs/DEVELOPMENT.md（含签名方案与版本管理）
+
+# exe 的版本资源是这样来的：
+#   产品名称 / 可执行文件名  ← productName
+#   文件版本 / 产品版本      ← package.json 的 version
+#   文件说明                ← package.json 的 description
+#   公司名称 / 版权          ← package.json 的 author / 这里的 copyright
+# 改完 version 必须重新打包才会生效。应用内看版本：右上角「?」→ 最后一步「关于与版本」。
+
+appId: com.poxia.cmake-vscode-studio
+productName: CMake-VSCode-Configurator
+copyright: Copyright © 2026 PoXia
+
+directories:
+  buildResources: resources
+  output: release
+
+# 只把构建产物和 package.json 打进 asar，源码/文档/工具链都不进
+files:
+  - out/**/*
+  - package.json
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    # 绿色版单文件：自解压到 %TEMP% 再运行，不写注册表
+    - target: portable
+      arch: [x64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  # 想放自定义图标：把 icon.ico 放进 resources/ 即可（256x256 起）
+  # icon: resources/icon.ico
+
+  # ---------------------------------------------------------------------------
+  # 代码签名
+  #
+  # 当前没有配置证书，所以首次运行会看到 SmartScreen「未知发布者」警告。
+  # 四种方案的取舍见 docs/DEVELOPMENT.md，这里只放可直接启用的模板。
+  #
+  # 注意：云签名服务（Azure）和本地 signtool 是**互斥**的，
+  #      两个都配的话以 azureSignOptions 为准。
+  # ---------------------------------------------------------------------------
+
+  # 方案 A：Azure Trusted Signing（个人/小团队推荐，约 $10/月，无需硬件令牌）
+  # 凭据走 DefaultAzureCredential：AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
+  # azureSignOptions:
+  #   endpoint: https://weu.codesigning.azure.net
+  #   codeSigningAccountName: your-signing-account
+  #   certificateProfileName: your-profile
+  #   publisherName: PoXia
+
+  # 方案 B：证书已装进 Windows 证书存储（EV 证书 + 硬件令牌走这条）
+  # signtoolOptions:
+  #   certificateSubjectName: "你的公司名称（证书上的『颁发给』）"
+  #   publisherName: PoXia
+  #   rfc3161TimeStampServer: http://timestamp.digicert.com
+
+  # 方案 C：手里有 .pfx 文件（老证书或自签名；2023 年后正规 CA 不再发这种）
+  # 更推荐用 CSC_LINK / CSC_KEY_PASSWORD 环境变量，别把密码写进配置文件
+  # signtoolOptions:
+  #   certificateFile: C:\path\to\cert.pfx
+  #   certificatePassword: ${env.CSC_KEY_PASSWORD}
+  #   publisherName: PoXia
+  #   rfc3161TimeStampServer: http://timestamp.digicert.com
+
+  # 配好签名后建议打开：没签上就让打包直接失败，避免误发布
+  # forceCodeSigning: true
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: CMake / VSCode 工程配置器
+  # 2052 = 简体中文
+  language: "2052"
+
+portable:
+  artifactName: ${productName}-${version}-portable.${ext}
+
+compression: maximum
+asar: true

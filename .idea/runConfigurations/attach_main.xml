@@ -1,0 +1,8 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="附加到主进程（5858）" type="AttachToNodeJS" factoryName="Attach to Node.js/Chrome">
+    <option name="host" value="localhost" />
+    <option name="port" value="5858" />
+    <option name="reconnect" value="true" />
+    <method v="2" />
+  </configuration>
+</component>

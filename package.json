@@ -1,0 +1,47 @@
+{
+  "name": "cmake-vscode-studio",
+  "productName": "CMake-VSCode-Configurator",
+  "version": "1.0.0",
+  "description": "CMake / VSCode 工程配置器 —— 检测 CMake 工程并图形化生成、修改 .vscode 配置",
+  "main": "./out/main/index.js",
+  "author": "PoXia",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "electron-vite dev",
+    "dev:inspect": "electron-vite dev --inspect --sourcemap",
+    "dev:brk": "electron-vite dev --inspectBrk --sourcemap",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tools/**/*.{ts,mjs}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"tools/**/*.{ts,mjs}\"",
+    "selftest": "node tools/run-ts.mjs tools/selftest.ts",
+    "scan": "node tools/run-ts.mjs tools/scan.ts",
+    "dist": "electron-vite build && electron-builder --win --dir",
+    "dist:installer": "electron-vite build && electron-builder --win",
+    "verify:signature": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/verify-signature.ps1",
+    "open:release": "powershell -NoProfile -Command \"Start-Process (Join-Path (Get-Location) 'release')\"",
+    "version:patch": "npm version --no-git-tag-version patch",
+    "version:minor": "npm version --no-git-tag-version minor",
+    "version:major": "npm version --no-git-tag-version major",
+    "postinstall": "node tools/ensure-electron.mjs"
+  },
+  "dependencies": {
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "prettier": "^3.9.10",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.7"
+  }
+}

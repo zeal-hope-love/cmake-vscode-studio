@@ -1,0 +1,19 @@
+# 仓库里统一用 LF。Windows 上的批处理 / PowerShell 脚本例外。
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制：不要做换行转换，也不要尝试 diff
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.node binary
+*.7z binary
+*.zip binary

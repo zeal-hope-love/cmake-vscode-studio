@@ -1,0 +1,27 @@
+# 依赖与构建产物
+node_modules/
+out/
+release/
+dist/
+
+# 自检脚本的临时打包产物
+.selftest-bundle.cjs
+
+# 开发期截图临时目录
+.dsh_shots/
+
+# 编辑器 / 系统
+.idea/*
+!/.idea/runConfigurations/
+!.idea/runConfigurations/**
+*.log
+*.err
+Thumbs.db
+desktop.ini
+
+# 打包/截图脚本用的临时文件（都是点开头的）
+.ts-run-bundle.cjs
+.pkg.log
+.pkg.err
+
+# 注意：.vscode/ 是故意提交的 —— 里面有本项目的调试配置（launch.json / tasks.json）

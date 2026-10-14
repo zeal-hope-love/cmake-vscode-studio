@@ -1,0 +1,30 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "调试主进程（attach 5858）",
+      "type": "node",
+      "request": "attach",
+      "port": 5858,
+      "address": "127.0.0.1",
+      "cwd": "${workspaceFolder}",
+      "sourceMaps": true,
+      "outFiles": ["${workspaceFolder}/out/main/**/*.js"],
+      "resolveSourceMapLocations": ["${workspaceFolder}/**", "!**/node_modules/**"],
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "presentation": { "hidden": false, "group": "主进程" }
+    },
+    {
+      "name": "调试渲染进程（attach 9222）",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9222,
+      "address": "127.0.0.1",
+      "webRoot": "${workspaceFolder}/src/renderer",
+      "sourceMaps": true,
+      "pathMapping": { "/": "${workspaceFolder}/src/renderer" },
+      "presentation": { "hidden": false, "group": "渲染进程" }
+    }
+  ],
+  "compounds": []
+}

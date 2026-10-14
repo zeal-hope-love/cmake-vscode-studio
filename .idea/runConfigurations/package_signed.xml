@@ -1,0 +1,28 @@
+<component name="ProjectRunConfigurationManager">
+  <!--
+    带签名的打包。
+
+    签名不是单独一步 —— electron-builder 在打包过程中按 electron-builder.yml 的
+    win.azureSignOptions / win.signtoolOptions 自动签名。所以这里只是给打包脚本
+    提供凭据环境变量。
+
+    用法：把下面的值填上（或者删掉这个配置，改用 WebStorm 的
+    Settings → Tools → Terminal → Environment variables，让终端里也能用）。
+
+    本文件里的值会明文存在 .idea/ 下，别把它提交到公开仓库。
+  -->
+  <configuration default="false" name="打包：带签名（先填凭据）" type="js.build_tools.npm" factoryName="npm">
+    <package-json value="$PROJECT_DIR$/package.json" />
+    <command value="run" />
+    <scripts>
+      <script value="dist:installer" />
+    </scripts>
+    <node-interpreter value="project" />
+    <envs>
+      <env name="AZURE_TENANT_ID" value="" />
+      <env name="AZURE_CLIENT_ID" value="" />
+      <env name="AZURE_CLIENT_SECRET" value="" />
+    </envs>
+    <method v="2" />
+  </configuration>
+</component>

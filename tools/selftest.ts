@@ -1,0 +1,983 @@
+/**
+ * 主进程服务的端到端自检（不依赖 Electron）。
+ *
+ * 覆盖：
+ *   1. 工具探测（含环境变量优先级）
+ *   2. 在真实 STM32 工程上做只读检测
+ *   3. 在一个合成的 STM32 工程上跑完整流程：检测 → 生成 → 预览 → 写入 → 校验
+ *   4. 固件名以 CMake 声明为准（陈旧构建产物的回归）
+ *   5. 快照与还原
+ *   6. VSCode 工程发现
+ *   7. 用生成的 OpenOCD 接线配置真的启动一次 openocd
+ */
+
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { DEFAULT_SETTINGS, type AppSettings } from '@shared/types'
+import { defaultGenOptions, generateBundle } from '../src/main/services/generators'
+import { scanProject } from '../src/main/services/scanner'
+import { detectTools, findSvdFile } from '../src/main/services/toolDetector'
+import { planFiles, writeFiles } from '../src/main/services/writer'
+import {
+  captureSnapshot,
+  configureSnapshots,
+  listSnapshots,
+  restoreSnapshot
+} from '../src/main/services/snapshotStore'
+import { discoverProjects, getRecentProjects, parseFileUri } from '../src/main/services/workspaceFinder'
+import { BUILTIN_TEMPLATES, isBuiltinTemplateId } from '../src/shared/builtinTemplates'
+import {
+  findUnresolvedVariables,
+  renderTemplateFiles,
+  renderTemplateText
+} from '../src/shared/templateRender'
+import { buildTemplateSkeleton } from '../src/shared/templateSkeleton'
+import { TEMPLATE_FILE_KEYS } from '../src/shared/types'
+import { adaptTemplateOptions } from '../src/shared/templateAdapt'
+
+let failures = 0
+let checks = 0
+
+function check(name: string, condition: boolean, detail = ''): void {
+  checks += 1
+  if (condition) {
+    console.log(`  ✓ ${name}`)
+  } else {
+    failures += 1
+    console.log(`  ✗ ${name}${detail ? `  —— ${detail}` : ''}`)
+  }
+}
+
+function section(title: string): void {
+  console.log(`\n${'='.repeat(74)}\n${title}\n${'='.repeat(74)}`)
+}
+
+// ==========================================================================
+// 1. 工具探测
+// ==========================================================================
+
+section('1. 工具探测')
+
+const settings: AppSettings = { ...DEFAULT_SETTINGS }
+const tools = detectTools(settings.tools, false)
+
+console.log('  查找顺序: 手动指定 → 环境变量 → 系统 PATH → 常见安装位置\n')
+for (const [key, item] of Object.entries(tools.items)) {
+  console.log(
+    `  ${key.padEnd(10)} ${item.found ? '✓' : '·'} ${item.path ?? '(未找到)'}  [${item.source}]`
+  )
+}
+console.log(`\n  环境变量安装根:`)
+if (!tools.envRoots.length) {
+  console.log('    （未检测到）')
+} else {
+  for (const root of tools.envRoots) {
+    console.log(`    ${root.name.padEnd(22)} ${root.exists ? '✓' : '✗ 路径不存在'}  ${root.value}`)
+  }
+}
+console.log(`  OpenOCD scripts: ${tools.openocdScripts ?? '(未找到)'}`)
+console.log(`  SVD 目录       : ${tools.svdDir ?? '(未找到)'}`)
+
+check('探测到 OpenOCD', tools.items.openocd.found, tools.items.openocd.path ?? '')
+check('探测到 CMake', tools.items.cmake.found)
+check('定位到 OpenOCD scripts 目录', tools.openocdScripts !== null)
+
+// ---- 环境变量优先：只有确实存在这些变量时才断言，换台机器不会误报 ----
+if (process.env.STM32CLT_PATH) {
+  check(
+    '识别到环境变量 STM32CLT_PATH',
+    tools.envRoots.some((r) => r.name === 'STM32CLT_PATH' && r.exists),
+    JSON.stringify(tools.envRoots)
+  )
+  check(
+    'CMake 来自环境变量而非 PATH',
+    tools.items.cmake.source === '环境变量 STM32CLT_PATH',
+    tools.items.cmake.source
+  )
+  check(
+    'Ninja 来自环境变量而非 PATH',
+    tools.items.ninja.source === '环境变量 STM32CLT_PATH',
+    tools.items.ninja.source
+  )
+  check(
+    'arm-none-eabi-gcc 来自环境变量而非 PATH',
+    tools.items.arm_gcc.source === '环境变量 STM32CLT_PATH',
+    tools.items.arm_gcc.source
+  )
+  check(
+    'arm-none-eabi-gdb 来自环境变量',
+    tools.items.arm_gdb.source.startsWith('环境变量'),
+    tools.items.arm_gdb.source
+  )
+  check('CubeCLT 自带的 SVD 目录被识别', tools.svdDir !== null, tools.svdDir ?? '')
+
+  const svd = findSvdFile(tools.svdDir, 'STM32F103C8T6')
+  check('能为 STM32F103C8T6 找到 SVD 文件', svd !== null, svd ?? '')
+  if (svd) console.log(`    → SVD: ${svd}`)
+  check('无法识别的型号返回 null', findSvdFile(tools.svdDir, 'GD32F103') === null)
+}
+
+// ---- 手动指定必须压过环境变量 ----
+const overridden = detectTools({ cmake: tools.items.cmake.path ?? '' }, false)
+check(
+  '手动指定优先于环境变量',
+  overridden.items.cmake.source === '手动指定',
+  overridden.items.cmake.source
+)
+
+// ==========================================================================
+// 2. 真实工程只读检测
+// ==========================================================================
+
+section('2. 真实工程检测（只读）')
+
+/**
+ * 真实工程只读检测用的路径。
+ *
+ * **故意不写死任何本机路径** —— 这是公开仓库，塞个人目录既没意义也泄露信息。
+ * 想跑这一段就自己给环境变量（分号分隔），不给就整段跳过：
+ *
+ *   $env:CFGSTUDIO_TEST_PROJECTS = 'D:\work\firmware-a;D:\work\firmware-b'
+ */
+const REAL_PROJECTS = (process.env.CFGSTUDIO_TEST_PROJECTS ?? '')
+  .split(';')
+  .map((s) => s.trim())
+  .filter(Boolean)
+
+if (REAL_PROJECTS.length === 0) {
+  console.log('  · 没有设置 CFGSTUDIO_TEST_PROJECTS，跳过真实工程检测')
+}
+
+let realScanned = 0
+for (const root of REAL_PROJECTS) {
+  let info
+  try {
+    info = scanProject(root)
+  } catch (err) {
+    console.log(`  · 跳过（不存在）: ${root}`)
+    continue
+  }
+  realScanned += 1
+
+  console.log(`\n  --- ${info.name} ---`)
+  console.log(`    芯片      : ${info.device ?? '—'}  (family=${info.ioc?.family ?? '—'})`)
+  console.log(`    ELF 名    : ${info.elfName}  ← ${info.elfSource}`)
+  console.log(`    目标      : ${info.targets.map((t) => `${t.name}[${t.kind}]`).join(', ') || '—'}`)
+  console.log(
+    `    presets   : ${info.presets.map((p) => `${p.name}${p.hidden ? '(hidden)' : ''}`).join(', ') || '—'}`
+  )
+  console.log(
+    `    build 目录: ${info.buildDirs.map((b) => `${b.name}${b.configured ? '✓' : '✗'}`).join(', ') || '—'}`
+  )
+  console.log(`    include   : ${info.includeDirs.join(', ') || '—'}`)
+
+  check(`${info.name}: 识别出芯片`, Boolean(info.device), info.device ?? '')
+  check(`${info.name}: 识别出 ELF 名`, info.elfName.length > 0, info.elfName)
+  check(`${info.name}: 定位到工程根`, info.root.toLowerCase() === root.toLowerCase())
+}
+
+check('至少检测到一个真实工程', realScanned > 0, `实际 ${realScanned} 个`)
+
+// ==========================================================================
+// 3. 合成工程完整流程
+// ==========================================================================
+
+section('3. 合成 STM32 工程：检测 → 生成 → 写入 → 校验')
+
+const sandbox = join(tmpdir(), 'cfgstudio-selftest')
+rmSync(sandbox, { recursive: true, force: true })
+const demo = join(sandbox, 'demo')
+mkdirSync(join(demo, 'build', 'Debug'), { recursive: true })
+mkdirSync(join(demo, 'build', 'Release'), { recursive: true })
+mkdirSync(join(demo, 'Core', 'Inc'), { recursive: true })
+mkdirSync(join(demo, 'cmake'), { recursive: true })
+
+writeFileSync(
+  join(demo, 'CMakeLists.txt'),
+  `cmake_minimum_required(VERSION 3.22)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_PROJECT_NAME demo)
+set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
+
+project(\${CMAKE_PROJECT_NAME})
+
+add_executable(\${CMAKE_PROJECT_NAME})
+
+target_include_directories(\${CMAKE_PROJECT_NAME} PRIVATE
+    Core/Inc
+    \${CMAKE_CURRENT_SOURCE_DIR}/application
+)
+
+target_compile_definitions(\${CMAKE_PROJECT_NAME} PRIVATE
+    STM32F103xB
+    USE_HAL_DRIVER
+)
+`,
+  'utf8'
+)
+
+writeFileSync(
+  join(demo, 'CMakePresets.json'),
+  JSON.stringify(
+    {
+      version: 3,
+      configurePresets: [
+        {
+          name: 'default',
+          hidden: true,
+          generator: 'Ninja',
+          binaryDir: '${sourceDir}/build/${presetName}',
+          toolchainFile: '${sourceDir}/cmake/gcc-arm-none-eabi.cmake',
+          cacheVariables: {}
+        },
+        { name: 'Debug', inherits: 'default', cacheVariables: { CMAKE_BUILD_TYPE: 'Debug' } },
+        { name: 'Release', inherits: 'default', cacheVariables: { CMAKE_BUILD_TYPE: 'Release' } }
+      ],
+      buildPresets: [
+        { name: 'Debug', configurePreset: 'Debug' },
+        { name: 'Release', configurePreset: 'Release' }
+      ]
+    },
+    null,
+    4
+  ),
+  'utf8'
+)
+
+writeFileSync(
+  join(demo, 'demo.ioc'),
+  [
+    'Mcu.CPN=STM32F103C8T6',
+    'Mcu.Family=STM32F1',
+    'Mcu.Name=STM32F103C(8-B)Tx',
+    'Mcu.Package=LQFP48',
+    'ProjectManager.ProjectName=demo',
+    ''
+  ].join('\n'),
+  'utf8'
+)
+
+writeFileSync(join(demo, 'cmake', 'gcc-arm-none-eabi.cmake'), '# toolchain\n', 'utf8')
+
+for (const variant of ['Debug', 'Release']) {
+  writeFileSync(
+    join(demo, 'build', variant, 'CMakeCache.txt'),
+    [
+      '# synthetic',
+      `CMAKE_BUILD_TYPE:STRING=${variant}`,
+      'CMAKE_GENERATOR:INTERNAL=Ninja',
+      'CMAKE_C_COMPILER:FILEPATH=C:/ST/GNU-tools-for-STM32/bin/arm-none-eabi-gcc.exe',
+      'CMAKE_MAKE_PROGRAM:FILEPATH=C:/ST/Ninja/ninja.exe',
+      'CMAKE_TOOLCHAIN_FILE:FILEPATH=' +
+        join(demo, 'cmake', 'gcc-arm-none-eabi.cmake').replace(/\\/g, '/'),
+      'CMAKE_EXPORT_COMPILE_COMMANDS:BOOL=ON',
+      'CMAKE_PROJECT_NAME:STATIC=demo',
+      ''
+    ].join('\n'),
+    'utf8'
+  )
+  writeFileSync(join(demo, 'build', variant, 'build.ninja'), '# ninja\n', 'utf8')
+  writeFileSync(join(demo, 'build', variant, 'compile_commands.json'), '[]\n', 'utf8')
+  writeFileSync(join(demo, 'build', variant, 'demo.elf'), 'ELF', 'utf8')
+}
+
+// ---- 检测 ----
+const project = scanProject(demo)
+check('合成工程：识别芯片 STM32F103C8T6', project.device === 'STM32F103C8T6', project.device ?? '')
+check('合成工程：ELF 名为 demo', project.elfName === 'demo', project.elfName)
+check(
+  '合成工程：解析出 1 个可执行目标',
+  project.targets.length === 1 && project.targets[0].kind === 'executable'
+)
+check(
+  '合成工程：preset 的 inherits 已展开（Debug 有 generator）',
+  project.presets.find((p) => p.name === 'Debug')?.generator === 'Ninja'
+)
+check(
+  '合成工程：binaryDir 变量已展开为绝对路径',
+  Boolean(project.presets.find((p) => p.name === 'Debug')?.binaryDir?.includes('build'))
+)
+check(
+  '合成工程：解析出 include 目录 Core/Inc',
+  project.includeDirs.includes('Core/Inc'),
+  project.includeDirs.join(',')
+)
+check(
+  '合成工程：支持 ${CMAKE_CURRENT_SOURCE_DIR}/... 形式的 include',
+  project.includeDirs.includes('application'),
+  project.includeDirs.join(',')
+)
+check(
+  '合成工程：解析出编译宏 STM32F103xB',
+  project.defines.includes('STM32F103xB'),
+  project.defines.join(',')
+)
+check('合成工程：找到 2 个构建目录', project.buildDirs.length === 2, String(project.buildDirs.length))
+check('合成工程：判为嵌入式工程', project.isEmbedded)
+
+// ---- 生成 ----
+const options = defaultGenOptions(project, tools, settings)
+console.log(
+  `\n  生成参数: probe=${options.probeKey} target=${options.targetCfg} elf=${options.elfName}`
+)
+console.log(
+  `            debugDir=${options.debugDir} preset=${options.debugPreset} hasBuildPresets=${options.hasBuildPresets}`
+)
+
+check('默认 target 映射为 stm32f1x.cfg', options.targetCfg === 'stm32f1x.cfg', options.targetCfg)
+check(
+  '默认 debugDir 为 build/Debug',
+  options.debugDir.replace(/\\/g, '/') === 'build/Debug',
+  options.debugDir
+)
+check('识别出 buildPresets', options.hasBuildPresets)
+
+const bundle = generateBundle(project, options)
+
+check(
+  '只生成 1 个调试配置（纯烧录交给任务，不冒充调试会话）',
+  bundle.launch.configurations.length === 1,
+  bundle.launch.configurations.map((c) => c.name).join(' | ')
+)
+check(
+  '不再生成「仅调试（不重新烧录）」—— 容易对着旧固件下断点',
+  !bundle.launch.configurations.some((c) => c.name.includes('仅调试')),
+  bundle.launch.configurations.map((c) => c.name).join(' | ')
+)
+/**
+ * 曾经想用 `noDebug: true` 让「仅烧录」出现在「运行和调试」下拉里。
+ * 实测 **cortex-debug 会忽略 noDebug** —— 照样拉起调试会话、把 CPU halt 住，
+ * 结果是「固件烧进去了但板子不跑」。所以那个配置被彻底删掉了，这里钉死不许回来。
+ */
+check(
+  '调试配置里不再出现靠 noDebug 冒充「仅烧录」的项',
+  !bundle.launch.configurations.some((c) => c.noDebug === true),
+  bundle.launch.configurations.map((c) => `${c.name}:noDebug=${String(c.noDebug)}`).join(' | ')
+)
+check(
+  '「烧录并调试」的 preLaunchTask 是构建任务（先构建再烧）',
+  bundle.launch.configurations[0].preLaunchTask === '构建 Debug',
+  String(bundle.launch.configurations[0].preLaunchTask)
+)
+check(
+  '调试配置类型为 cortex-debug',
+  bundle.launch.configurations.every((c) => c.type === 'cortex-debug')
+)
+check(
+  '调试配置的 executable 指向 build/Debug/demo.elf',
+  String(bundle.launch.configurations[0].executable).endsWith('build/Debug/demo.elf'),
+  String(bundle.launch.configurations[0].executable)
+)
+check('调试配置的 device 为 STM32F103C8T6', bundle.launch.configurations[0].device === 'STM32F103C8T6')
+
+/**
+ * 纯烧录走任务，而且**默认生成任务就是它** ——
+ * Ctrl+Shift+B 一步「构建 + 烧录」，编译不过时依赖链自动停下不会去烧。
+ */
+const defaultBuildTask = bundle.tasks.tasks.find(
+  (t) => typeof t.group === 'object' && (t.group as { isDefault?: boolean }).isDefault === true
+)
+check(
+  '默认生成任务是「烧录并运行 Debug 固件」',
+  defaultBuildTask?.label === '烧录并运行 Debug 固件',
+  String(defaultBuildTask?.label)
+)
+check(
+  '默认生成任务带 dependsOn 构建（保证先编译）',
+  (defaultBuildTask?.dependsOn ?? []).includes('构建 Debug'),
+  JSON.stringify(defaultBuildTask?.dependsOn ?? [])
+)
+
+check('生成了 openocd 接线配置', bundle.openocdCfg !== null)
+check(
+  '接线配置文件名正确',
+  bundle.openocdCfg?.fileName === 'openocd-stm32f1x-cmsis-dap.cfg',
+  bundle.openocdCfg?.fileName ?? ''
+)
+check(
+  '接线配置内容含 interface 与 target',
+  Boolean(
+    bundle.openocdCfg?.content.includes('source [find interface/cmsis-dap.cfg]') &&
+    bundle.openocdCfg?.content.includes('source [find target/stm32f1x.cfg]')
+  )
+)
+check(
+  '调试配置引用生成的接线配置文件',
+  JSON.stringify(bundle.launch.configurations[0].configFiles ?? []).includes(
+    bundle.openocdCfg?.fileName ?? '@@'
+  )
+)
+
+const defaultBuildTasks = bundle.tasks.tasks.filter(
+  (t) =>
+    typeof t.group === 'object' && t.group !== null && (t.group as { isDefault?: boolean }).isDefault
+)
+check('恰好 1 个默认构建任务', defaultBuildTasks.length === 1, String(defaultBuildTasks.length))
+check(
+  '「构建 Debug」任务本身用 --preset Debug',
+  JSON.stringify(bundle.tasks.tasks.find((t) => t.label === '构建 Debug')?.args ?? []) ===
+    JSON.stringify(['--build', '--preset', 'Debug']),
+  JSON.stringify(bundle.tasks.tasks.find((t) => t.label === '构建 Debug')?.args)
+)
+
+const flashTasks = bundle.tasks.tasks.filter((t) => t.label.startsWith('烧录并运行'))
+check('生成 2 个烧录任务', flashTasks.length === 2, String(flashTasks.length))
+check(
+  '烧录任务调用 OpenOCD 并指向接线配置',
+  flashTasks.every(
+    (t) =>
+      t.type === 'process' && JSON.stringify(t.args ?? []).includes(bundle.openocdCfg?.fileName ?? '@@')
+  )
+)
+
+/**
+ * 回归：烧录任务里的 ELF 路径必须**同时**满足两条，缺一条都会让烧录失败，
+ * 而且两种失败在界面上长得一模一样（「preLaunchTask 已终止，退出代码为 1」）：
+ *
+ *   ① 必须用 `${workspaceFolder}/...` 绝对形式 —— 相对路径靠进程工作目录解析，
+ *      而任务里的 `options.cwd` 在 VSCode 里并不总能生效。
+ *   ② 必须用 **Tcl 花括号** 包起来 —— `${workspaceFolder}` 展开是 Windows 反斜杠路径，
+ *      而 `program` 是 Tcl 命令，`\U` `\P` `\R` `\T` 会被当成 Tcl 转义序列吃掉，
+ *      OpenOCD 于是报 `Error: couldn't open C:UserssomeoneDesktop...`。
+ *      （同一条命令的 `-f` 不受影响，它走 OpenOCD 的 C++ 参数解析器。）
+ *
+ * 实测量过：裸路径退出码 1；加花括号后 `** Verified OK **`、退出码 0。
+ */
+check(
+  '烧录任务的 ELF 用 ${workspaceFolder} 绝对路径 + Tcl 花括号',
+  flashTasks.every((t) => (t.args ?? []).some((a) => /program\s+\{\$\{workspaceFolder\}\//.test(a))),
+  flashTasks.map((t) => (t.args ?? []).join(' ')).join(' | ')
+)
+check(
+  '烧录任务里没有未加花括号的 program 目标（防止 Tcl 吃反斜杠）',
+  flashTasks.every((t) => !(t.args ?? []).some((a) => /program\s+(?!\{)/.test(a))),
+  flashTasks.map((t) => (t.args ?? []).join(' ')).join(' | ')
+)
+check(
+  '烧录任务里没有裸相对路径的 program 目标（防止依赖 cwd）',
+  flashTasks.every((t) => !(t.args ?? []).some((a) => /program\s+\{(?!\$\{workspaceFolder\})/.test(a))),
+  flashTasks.map((t) => (t.args ?? []).join(' ')).join(' | ')
+)
+
+/**
+ * 回归：烧录任务必须**先构建**。
+ *
+ * VSCode 的 dependsOn 默认是 sequence 顺序模式，依赖失败时后续任务不执行 ——
+ * 所以编译不过时不会去烧旧固件。Ninja 在源码没变时什么都不做，这个依赖几乎不花时间。
+ */
+check(
+  'Debug 烧录任务依赖「构建 Debug」',
+  (flashTasks.find((t) => t.label.includes('Debug'))?.dependsOn ?? []).includes('构建 Debug'),
+  JSON.stringify(flashTasks.find((t) => t.label.includes('Debug'))?.dependsOn ?? [])
+)
+check(
+  'Release 烧录任务依赖「构建 Release」',
+  (flashTasks.find((t) => t.label.includes('Release'))?.dependsOn ?? []).includes('构建 Release'),
+  JSON.stringify(flashTasks.find((t) => t.label.includes('Release'))?.dependsOn ?? [])
+)
+check(
+  'dependsOn 指向的构建任务确实存在（否则 VSCode 会报找不到任务）',
+  (() => {
+    const labels = new Set(bundle.tasks.tasks.map((t) => t.label))
+    return flashTasks.every((t) => (t.dependsOn ?? []).every((d) => labels.has(d)))
+  })(),
+  flashTasks.map((t) => (t.dependsOn ?? []).join(',')).join(' | ')
+)
+
+check(
+  'settings.json 含 cortex-debug.openocdPath.windows',
+  typeof bundle.settings['cortex-debug.openocdPath.windows'] === 'string'
+)
+check(
+  'settings.json 的路径用正斜杠',
+  !String(bundle.settings['cortex-debug.openocdPath.windows'] ?? '').includes('\\')
+)
+check(
+  'c_cpp_properties 指向 compile_commands.json',
+  String(bundle.cpp.configurations[0].compileCommands).endsWith('compile_commands.json'),
+  String(bundle.cpp.configurations[0].compileCommands)
+)
+check(
+  'c_cpp_properties 含 Core/Inc',
+  (bundle.cpp.configurations[0].includePath ?? []).some((p) => p.includes('Core/Inc'))
+)
+
+// ---- 预览 + 写入 ----
+const stringify = (v: unknown): string => JSON.stringify(v, null, 4) + '\n'
+const files = [
+  { name: 'launch.json', relativePath: '.vscode/launch.json', content: stringify(bundle.launch) },
+  { name: 'tasks.json', relativePath: '.vscode/tasks.json', content: stringify(bundle.tasks) },
+  { name: 'settings.json', relativePath: '.vscode/settings.json', content: stringify(bundle.settings) },
+  {
+    name: 'c_cpp_properties.json',
+    relativePath: '.vscode/c_cpp_properties.json',
+    content: stringify(bundle.cpp)
+  },
+  ...(bundle.openocdCfg
+    ? [
+        {
+          name: bundle.openocdCfg.fileName,
+          relativePath: `.vscode/${bundle.openocdCfg.fileName}`,
+          content: bundle.openocdCfg.content
+        }
+      ]
+    : [])
+]
+
+const planned = planFiles({ projectRoot: demo, files })
+check('预览得到 5 个待写文件', planned.length === 5, String(planned.length))
+check(
+  '预览显示这些文件原本都不存在',
+  planned.every((p) => !p.exists)
+)
+
+const written = writeFiles({ projectRoot: demo, files, backup: false })
+check('写入无错误', written.errors.length === 0, written.errors.join('; '))
+check('写入 5 个文件', written.written.length === 5, String(written.written.length))
+
+// ---- 校验落盘内容 ----
+const launchOnDisk = JSON.parse(readFileSync(join(demo, '.vscode', 'launch.json'), 'utf8'))
+check(
+  '落盘的 launch.json 能解析且含 1 个配置',
+  launchOnDisk.configurations.length === 1,
+  String(launchOnDisk.configurations.length)
+)
+
+const settingsOnDisk = JSON.parse(readFileSync(join(demo, '.vscode', 'settings.json'), 'utf8'))
+check(
+  '落盘的 settings.json 含 openocd 路径',
+  Boolean(settingsOnDisk['cortex-debug.openocdPath.windows'])
+)
+
+const cfgOnDisk = readFileSync(join(demo, '.vscode', 'openocd-stm32f1x-cmsis-dap.cfg'), 'utf8')
+check('落盘的 OpenOCD 配置含 target/stm32f1x.cfg', cfgOnDisk.includes('target/stm32f1x.cfg'))
+
+// ---- 幂等性 ----
+const again = writeFiles({ projectRoot: demo, files, backup: false })
+check(
+  '重复写入是幂等的（0 个文件被改动）',
+  again.written.length === 0,
+  `改动了 ${again.written.length} 个`
+)
+check('重复写入识别为内容相同', again.unchanged.length === 5, String(again.unchanged.length))
+
+// ---- 备份 ----
+const changedFiles = files.map((f) =>
+  f.name === 'settings.json'
+    ? { ...f, content: f.content.replace('cortex-debug', 'x-cortex-debug') }
+    : f
+)
+const withBackup = writeFiles({ projectRoot: demo, files: changedFiles, backup: true })
+check('开启备份后产生了备份文件', withBackup.backups.length === 1, String(withBackup.backups.length))
+check('备份目录位于 .vscode/.backup 下', Boolean(withBackup.backupDir?.includes('.backup')))
+
+// ---- 路径越界防护 ----
+const evil = writeFiles({
+  projectRoot: demo,
+  files: [{ name: 'evil.txt', relativePath: '../../evil.txt', content: 'x' }],
+  backup: false
+})
+check('拒绝越界写入', evil.errors.length === 1 && evil.written.length === 0, evil.errors.join('; '))
+
+// ---- 重新检测：应能读到刚写入的文件 ----
+const after = scanProject(demo)
+check(
+  '重新检测读到了 launch.json 与 tasks.json',
+  after.vscodeFiles['launch.json'].exists && after.vscodeFiles['tasks.json'].exists
+)
+check(
+  '重新检测识别出 1 个调试配置',
+  after.vscodeFiles['launch.json'].note.includes('1'),
+  after.vscodeFiles['launch.json'].note
+)
+check('重新检测发现 1 个 openocd 接线配置', after.openocdCfgFiles.length === 1)
+
+// ==========================================================================
+// 4. 回归：陈旧构建产物不能覆盖 CMake 声明的固件名
+// ==========================================================================
+
+section('4. 固件名以 CMake 声明为准（陈旧产物不能覆盖它）')
+
+// 真实踩过的坑：工程从 legacy-name 改名成 test-01 之后，build/Debug 里
+// 同时留着 legacy-name.elf（旧）和 test-01.elf（新）。旧逻辑取排序第一个，
+// 于是生成的 launch.json 指向早就过期的 legacy-name.elf。
+writeFileSync(join(demo, 'build', 'Debug', 'stale_old_name.elf'), 'OLD', 'utf8')
+
+const rescanned = scanProject(demo)
+check('固件名仍是 CMake 声明的 demo', rescanned.elfName === 'demo', rescanned.elfName)
+check(
+  '固件名来源标记为 declared',
+  rescanned.elfNameConfidence === 'declared',
+  rescanned.elfNameConfidence
+)
+check(
+  '对不一致的旧产物给出了警告',
+  rescanned.warnings.some((w) => w.includes('stale_old_name')),
+  rescanned.warnings.join(' | ')
+)
+
+// 反过来：CMake 里根本没有可用的目标名时，才允许用实际产物补正
+const noTarget = join(sandbox, 'no-target')
+mkdirSync(join(noTarget, 'build', 'Debug'), { recursive: true })
+writeFileSync(join(noTarget, 'CMakeLists.txt'), 'cmake_minimum_required(VERSION 3.20)\n', 'utf8')
+writeFileSync(
+  join(noTarget, 'build', 'Debug', 'CMakeCache.txt'),
+  'CMAKE_BUILD_TYPE:STRING=Debug\n',
+  'utf8'
+)
+writeFileSync(join(noTarget, 'build', 'Debug', 'real_name.elf'), 'ELF', 'utf8')
+
+const guessed = scanProject(noTarget)
+check('没有 CMake 目标名时，改用实际产物补正', guessed.elfName === 'real_name', guessed.elfName)
+
+// compile_commands 必须指向 compile_commands.json，而不是 .elf
+const opts = defaultGenOptions(scanProject(demo), tools, settings)
+check(
+  'compileCommands 指向 compile_commands.json',
+  opts.compileCommands.endsWith('compile_commands.json'),
+  opts.compileCommands
+)
+
+// ==========================================================================
+// 5. 快照与还原
+// ==========================================================================
+
+section('5. 快照与还原')
+
+configureSnapshots(join(sandbox, 'snapshots'))
+
+const snapDemo = join(sandbox, 'snap-demo')
+mkdirSync(join(snapDemo, '.vscode'), { recursive: true })
+const userLaunch = '{\n    "version": "0.2.0",\n    "configurations": []\n}\n'
+const userSettings = '{\n    "my.own.setting": true\n}\n'
+writeFileSync(join(snapDemo, '.vscode', 'launch.json'), userLaunch, 'utf8')
+writeFileSync(join(snapDemo, '.vscode', 'settings.json'), userSettings, 'utf8')
+
+const snapPlanned = planFiles({ projectRoot: snapDemo, files })
+const snapChanged = snapPlanned
+  .filter((f) => f.previous !== f.content)
+  .map((f) => ({ relativePath: f.relativePath, previous: f.previous }))
+
+const snapId = captureSnapshot(snapDemo, snapChanged)
+const snapMeta = listSnapshots(snapDemo)[0]
+check('写入前产生了快照', snapId !== null, String(snapId))
+check('快照里记录了 5 个待改文件', snapMeta?.fileCount === 5, String(snapMeta?.fileCount))
+check('快照里 3 个是「写入前不存在」', snapMeta?.newFileCount === 3, String(snapMeta?.newFileCount))
+
+const snapWrite = writeFiles({ projectRoot: snapDemo, files, backup: false })
+check('写入成功', snapWrite.errors.length === 0, snapWrite.errors.join('; '))
+check(
+  '写入后 launch.json 已被覆盖',
+  readFileSync(join(snapDemo, '.vscode', 'launch.json'), 'utf8') !== userLaunch
+)
+
+const restored = restoreSnapshot(snapDemo, snapId!)
+check('还原无错误', restored.errors.length === 0, restored.errors.join('; '))
+check(
+  '还原后 launch.json 回到用户原有内容',
+  readFileSync(join(snapDemo, '.vscode', 'launch.json'), 'utf8') === userLaunch
+)
+check(
+  '还原后 settings.json 回到用户原有内容',
+  readFileSync(join(snapDemo, '.vscode', 'settings.json'), 'utf8') === userSettings
+)
+check(
+  '还原时删掉了 3 个写入前不存在的文件',
+  restored.removed.length === 3,
+  String(restored.removed.length)
+)
+check(
+  '还原后 openocd 接线配置已不存在',
+  !existsSync(join(snapDemo, '.vscode', 'openocd-stm32f1x-cmsis-dap.cfg'))
+)
+check('还原后 tasks.json 已不存在', !existsSync(join(snapDemo, '.vscode', 'tasks.json')))
+
+// 越界防护：快照里带 ../ 也不能写到工程外
+const evilSnap = captureSnapshot(snapDemo, [{ relativePath: '../../evil.txt', previous: 'x' }])
+const evilRestore = restoreSnapshot(snapDemo, evilSnap!)
+check('还原时拒绝越界路径', evilRestore.errors.length === 1, evilRestore.errors.join('; '))
+
+// ==========================================================================
+// 6. 内置模板
+// ==========================================================================
+
+section('6. 内置模板：列表非空，且套用时不会污染目标工程')
+
+check('内置模板列表非空', BUILTIN_TEMPLATES.length >= 1, `实际 ${BUILTIN_TEMPLATES.length} 个`)
+
+const builtin = BUILTIN_TEMPLATES[0]
+check('内置模板带 builtin 标记', builtin.builtin === true)
+check('内置模板 id 带 builtin: 前缀', isBuiltinTemplateId(builtin.id), builtin.id)
+check('用户模板 id 不会被误判成内置', !isBuiltinTemplateId('6f1c9a2e-0000-4000-8000-000000000000'))
+check('内置模板只写部分字段（没有写死固件名）', builtin.options.elfName === undefined)
+
+/**
+ * 关键回归：内置模板是「部分覆盖」，套用时**绝不能**把目标工程推导出来的
+ * 固件名/芯片/构建目录/include 覆盖掉 —— 否则一个通用模板就会把
+ * B 工程写成 A 工程的样子。
+ */
+const fakeBase = {
+  elfName: 'demo',
+  device: 'STM32F103C8Tx',
+  probeKey: 'stlink' as const,
+  interfaceCfg: 'interface/stlink.cfg',
+  resetConfig: '',
+  targetCfg: 'target/stm32f1x.cfg',
+  adapterSpeed: 500,
+  openocdExe: 'openocd.exe',
+  cmakeExe: 'cmake.exe',
+  ninjaExe: 'ninja.exe',
+  toolchainDir: 'C:/toolchain',
+  debugDir: 'build/Debug',
+  releaseDir: 'build/Release',
+  debugPreset: 'Debug',
+  releasePreset: 'Release',
+  hasBuildPresets: false,
+  configurePreset: '',
+  compileCommands: 'build/Debug/compile_commands.json',
+  svdFile: '',
+  generator: 'Ninja',
+  includeDirs: ['/proj/inc'],
+  defines: ['BOARD_V2'],
+  cStandard: 'c99',
+  cppStandard: 'c++14'
+}
+
+const adaptedBuiltin = adaptTemplateOptions(builtin.options, fakeBase)
+check('内置模板会切到 CMSIS-DAP 探针', adaptedBuiltin.probeKey === 'cmsis-dap')
+check('内置模板会设成 1MHz 适配器速度', adaptedBuiltin.adapterSpeed === 1000)
+check('内置模板不覆盖固件名', adaptedBuiltin.elfName === 'demo', adaptedBuiltin.elfName)
+check('内置模板不覆盖芯片', adaptedBuiltin.device === 'STM32F103C8Tx', adaptedBuiltin.device)
+check('内置模板不覆盖构建目录', adaptedBuiltin.debugDir === 'build/Debug', adaptedBuiltin.debugDir)
+check('内置模板不覆盖 include', adaptedBuiltin.includeDirs[0] === '/proj/inc')
+check('内置模板不覆盖编译宏', adaptedBuiltin.defines[0] === 'BOARD_V2')
+check('内置模板不覆盖 C 标准', adaptedBuiltin.cStandard === 'c99', adaptedBuiltin.cStandard)
+check('内置模板不覆盖工具链目录', adaptedBuiltin.toolchainDir === 'C:/toolchain')
+
+/**
+ * 把内置样板「到底改了什么」钉死：它只该钉住探针和适配器速度，
+ * 其余字段必须与「默认（按工程检测）」完全一致 —— 否则一个样板会悄悄改掉别的东西。
+ */
+const builtinDiff = (Object.keys(fakeBase) as Array<keyof typeof fakeBase>).filter(
+  (k) => JSON.stringify(adaptedBuiltin[k]) !== JSON.stringify(fakeBase[k])
+)
+check(
+  '内置样板只改了「探针」和「适配器速度」两项',
+  builtinDiff.sort().join(',') === 'adapterSpeed,probeKey',
+  builtinDiff.join(',')
+)
+
+// ==========================================================================
+// 7. VSCode 工程发现
+// ==========================================================================
+
+section('7. VSCode 工程发现')
+
+const candidates = discoverProjects(true, true)
+console.log(`  发现 ${candidates.length} 个候选工程`)
+for (const c of candidates.slice(0, 8)) {
+  console.log(`    · ${c.root}   [${c.source}]${c.chip ? `  芯片=${c.chip}` : ''}`)
+}
+check('工程发现不抛异常', Array.isArray(candidates))
+
+// ---- 回归：VSCode 的 workspace.json 里冒号是编码成 %3A 的 ----
+// 早期版本先判断 text[2] === ':' 再解码，导致 /c%3A/... 解析成 /c:/...，
+// 「最近打开的工程」永远是空的。这里用两种写法各验一遍。
+check(
+  'file URI：能解析 file:///c%3A/... （VSCode 实际写法）',
+  parseFileUri('file:///c%3A/Users/someone/proj/my-firmware') === 'c:/Users/someone/proj/my-firmware',
+  String(parseFileUri('file:///c%3A/Users/someone/proj/my-firmware'))
+)
+check(
+  'file URI：也能解析未编码的 file:///c:/...',
+  parseFileUri('file:///c:/Users/someone/Desktop/x') === 'c:/Users/someone/Desktop/x',
+  String(parseFileUri('file:///c:/Users/someone/Desktop/x'))
+)
+check(
+  'file URI：中文路径能正确解码',
+  parseFileUri('file:///c%3A/Desktop/%E6%B5%8B%E8%AF%95') === 'c:/Desktop/测试'
+)
+check('file URI：空值返回 null', parseFileUri('') === null)
+
+// ---- 回归：把 APPDATA 指到临时目录，验证「最近打开的工程」真的能扫出来 ----
+{
+  const fakeAppData = join(sandbox, 'appdata')
+  const wsDir = join(fakeAppData, 'Code', 'User', 'workspaceStorage', 'deadbeef')
+  mkdirSync(wsDir, { recursive: true })
+
+  const demoUri = `file:///${demo.replace(/\\/g, '/').replace(/:/g, '%3A')}`
+  writeFileSync(join(wsDir, 'workspace.json'), JSON.stringify({ folder: demoUri }), 'utf8')
+
+  const savedAppData = process.env.APPDATA
+  process.env.APPDATA = fakeAppData
+  const recents = getRecentProjects()
+  process.env.APPDATA = savedAppData
+
+  check('最近工程：能从 workspaceStorage 扫出工程', recents.length === 1, `实际 ${recents.length} 个`)
+  check(
+    '最近工程：定位到的是工程根',
+    recents[0]?.root?.toLowerCase() === demo.toLowerCase(),
+    String(recents[0]?.root)
+  )
+}
+
+// ==========================================================================
+// 8. 模板 v2：占位符替换与骨架生成
+// ==========================================================================
+
+section('8. 模板 v2：占位符不会被误替换，骨架可以被任何工程套用')
+
+const tvars = {
+  elfName: 'test-01',
+  device: 'STM32F407IGH6',
+  debugDir: 'build/Debug',
+  openocdCfg: 'openocd-stm32f4x-cmsis-dap.cfg',
+  probeLabel: 'CMSIS-DAP / DAP-Link'
+}
+
+const renderedElf = renderTemplateText('${workspaceFolder}/${debugDir}/${elfName}.elf', tvars)
+check('占位符按目标工程替换', renderedElf === '${workspaceFolder}/build/Debug/test-01.elf', renderedElf)
+check(
+  'VSCode 的 ${workspaceFolder} 原样保留（最容易踩的坑）',
+  renderTemplateText('${workspaceFolder}/x', tvars) === '${workspaceFolder}/x'
+)
+const renderedBuildType = renderTemplateText('${workspaceFolder}/build/${buildType}', tvars)
+check(
+  'CMake Tools 的 ${buildType} 原样保留',
+  renderedBuildType === '${workspaceFolder}/build/${buildType}',
+  renderedBuildType
+)
+check(
+  '没提供值的变量保持原样（不悄悄变空串）',
+  renderTemplateText('${svdFile}', tvars) === '${svdFile}',
+  renderTemplateText('${svdFile}', tvars)
+)
+const unresolved = findUnresolvedVariables('${workspaceFolder}/${svdFile}', tvars)
+check(
+  '未解析检测不会把 workspaceFolder 算进去',
+  unresolved.join(',') === 'svdFile',
+  unresolved.join(',')
+)
+
+const presetSkeleton = buildTemplateSkeleton({
+  target: { editor: 'vscode', buildSystem: 'preset', probe: 'cmsis-dap' },
+  options: { probeKey: 'cmsis-dap', adapterSpeed: 1000 }
+})
+check(
+  '骨架四份文件齐全',
+  TEMPLATE_FILE_KEYS.every((k) => Boolean(presetSkeleton[k] && presetSkeleton[k].trim())),
+  TEMPLATE_FILE_KEYS.filter((k) => !presetSkeleton[k]).join(',')
+)
+check(
+  '骨架每一份都是合法 JSON',
+  TEMPLATE_FILE_KEYS.every((k) => {
+    try {
+      JSON.parse(presetSkeleton[k])
+      return true
+    } catch {
+      return false
+    }
+  })
+)
+check('preset 模式下任务用 --preset', presetSkeleton['tasks.json'].includes('--preset'))
+check(
+  '骨架不写死固件名（必须是占位符）',
+  !presetSkeleton['launch.json'].includes('test-01') &&
+    presetSkeleton['launch.json'].includes('${elfName}')
+)
+check('骨架里保留了 VSCode 变量', presetSkeleton['launch.json'].includes('${workspaceFolder}'))
+
+const dirSkeleton = buildTemplateSkeleton({
+  target: { editor: 'vscode', buildSystem: 'dir', probe: 'cmsis-dap' },
+  options: {}
+})
+check('dir 模式下任务不用 --preset', !dirSkeleton['tasks.json'].includes('--preset'))
+
+const jlinkSkeleton = buildTemplateSkeleton({
+  target: { editor: 'vscode', buildSystem: 'preset', probe: 'jlink-native' },
+  options: {}
+})
+check('非 OpenOCD 探针不生成 openocd 烧录任务', !jlinkSkeleton['tasks.json'].includes('"openocd"'))
+check(
+  '非 OpenOCD 探针的 launch 不带 configFiles',
+  !jlinkSkeleton['launch.json'].includes('configFiles')
+)
+
+const renderedFiles = renderTemplateFiles(presetSkeleton, tvars)
+check(
+  '渲染后落到 .vscode/ 下且四份齐全',
+  Object.keys(renderedFiles).sort().join(',') ===
+    '.vscode/c_cpp_properties.json,.vscode/launch.json,.vscode/settings.json,.vscode/tasks.json',
+  Object.keys(renderedFiles).join(',')
+)
+check(
+  '渲染后 elfName 被真的填进去了',
+  renderedFiles['.vscode/launch.json'].includes('build/Debug/test-01.elf')
+)
+
+// ==========================================================================
+// 9. 用生成的 OpenOCD 配置真的启动一次 openocd
+// ==========================================================================
+
+section('9. 用生成的 OpenOCD 接线配置启动 OpenOCD')
+
+const openocdExe = tools.items.openocd.path
+if (!openocdExe) {
+  console.log('  · 未探测到 openocd.exe，跳过这一节')
+} else {
+  const cfgPath = join(demo, '.vscode', 'openocd-stm32f1x-cmsis-dap.cfg')
+  const res = spawnSync(openocdExe, ['-f', cfgPath, '-c', 'init; exit'], {
+    encoding: 'utf8',
+    timeout: 25000,
+    windowsHide: true
+  })
+  const output = `${res.stdout ?? ''}\n${res.stderr ?? ''}`
+
+  console.log('  openocd 输出:')
+  for (const line of output
+    .split(/\r?\n/)
+    .filter((l) => l.trim())
+    .slice(0, 16)) {
+    console.log(`    | ${line}`)
+  }
+
+  // 「找不到脚本」是配置生成的硬错误；下面几种都只是**硬件侧**的情况，属正常：
+  //   · 没插调试器
+  //   · 调试器插了但没响应（连续烧录后会这样，`CMSIS-DAP command CMD_INFO failed` 就是）
+  //   · 调试器被别的进程占着（上一个 OpenOCD / 调试会话没退干净）
+  // 这条断言要守的是「生成的脚本能被 OpenOCD 正确解析」，不是「硬件一定在状态」，
+  // 所以硬件侧的失败一律放行 —— 否则一条自检会被探针的脾气搞成假红。
+  const scriptMissing = /Can't find|couldn't find|No such file|Can't find file/i.test(output)
+  const adapterUnusable =
+    /unable to find a matching|no .*(device|adapter) found|open failed|Failed to open|No CMSIS-DAP|unable to open .*device|CMD_INFO failed|command .* failed|already in use|LIBUSB/i.test(
+      output
+    )
+
+  check(
+    'OpenOCD 能解析生成的 interface/target 脚本（没有找不到文件）',
+    !scriptMissing,
+    output.slice(0, 200)
+  )
+  check(
+    'OpenOCD 成功初始化，或明确报告硬件侧不可用（没插/没响应/被占用）',
+    res.status === 0 || adapterUnusable,
+    `exit=${res.status}`
+  )
+}
+
+// ==========================================================================
+// 汇总
+// ==========================================================================
+
+rmSync(sandbox, { recursive: true, force: true })
+
+section('结果')
+console.log(`  共 ${checks} 项检查，失败 ${failures} 项`)
+if (failures > 0) {
+  console.log('  ✗ 自检未通过')
+  process.exit(1)
+}
+console.log('  ✓ 全部通过')
