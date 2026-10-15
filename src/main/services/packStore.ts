@@ -463,7 +463,9 @@ function adaptNote(packId: string, header: string): string {
 // PID 结构体扫描
 // --------------------------------------------------------------------------
 
-const PID_TYPE_RE = /^\s*(pid_type_def|gimbal_PID_t)\s+([A-Za-z_]\w*)\s*(\[[^\]]*\])?\s*(?:;[^;]*)?$/gm
+// 不要求写在行首：`typedef struct { pid_type_def some_pid; } other_t;` 这种单行
+// 写法很常见，锚了 ^ 就整行扫不到（自检里就是这么抓出来的）。
+const PID_TYPE_RE = /(pid_type_def|gimbal_PID_t)\s+([A-Za-z_]\w*)\s*(\[[^\]]*\])?\s*;/g
 
 /**
  * 找出工程里所有 `pid_type_def` / `gimbal_PID_t` 的声明。

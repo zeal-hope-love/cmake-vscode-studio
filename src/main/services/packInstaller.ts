@@ -312,8 +312,17 @@ function patchDefine(
   const file = join(root, rel.split(posix.sep).join('\\'))
   if (!existsSync(file)) return null
   const text = readFileSync(file, 'utf8')
-  if (new RegExp(`#\\s*define\\s+${name}\\b`).test(text)) {
-    return { before: text, after: text, note: `${rel} 里已经有 ${name}，跳过` }
+  // 已经定义过这个宏：要看**值**对不对，不能只看「存在就当没事」。
+  // 例如工程里写的是 `#define SBUS_FORWARD_TO_USART1 1`（还开着转发），
+  // 我们的目的是把它关掉，跳过等于没干活，USART1 照样被占用。
+  const defined = new RegExp(`(^[ \\t]*#[ \\t]*define[ \\t]+${name}[ \\t]+)(\\S+)`, 'm').exec(text)
+  if (defined) {
+    if (defined[2] === value) {
+      return { before: text, after: text, note: `${rel} 里 ${name} 已经是 ${value}，跳过` }
+    }
+    const after =
+      text.slice(0, defined.index) + defined[1] + value + text.slice(defined.index + defined[0].length)
+    return { before: text, after, note: `${rel} 里把 ${name} 从 ${defined[2]} 改成 ${value}` }
   }
   const block = [
     '',

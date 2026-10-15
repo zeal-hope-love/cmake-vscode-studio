@@ -39,6 +39,20 @@ import {
 import { buildTemplateSkeleton } from '../src/shared/templateSkeleton'
 import { TEMPLATE_FILE_KEYS } from '../src/shared/types'
 import { adaptTemplateOptions } from '../src/shared/templateAdapt'
+import {
+  checkPackCompat,
+  inspectProject,
+  listPacks,
+  loadPack,
+  readPackFile,
+  scanPidStructs
+} from '../src/main/services/packStore'
+import {
+  applyPackInstall,
+  planPackInstall,
+  renderBind,
+  renderConfig
+} from '../src/main/services/packInstaller'
 
 let failures = 0
 let checks = 0
@@ -1171,6 +1185,263 @@ target_sources(STM32_Drivers PRIVATE \${STM32_Drivers_Src})
     'CMake: 头文件骨架带正确的 include guard',
     header.includes('#ifndef OLED_TASK_H') && header.includes('#define OLED_TASK_H'),
     header.slice(0, 60)
+  )
+}
+
+// ==========================================================================
+// 11. 模块包（vofa）：探测 → 兼容性 → PID 扫描 → 清单 → 写入 → 还原
+//
+// 用**合成工程**而不是机器上的真工程 —— 换台机器结果一样，而且能精确造出
+// 「没有 RX DMA」「有 gimbal_PID_t 成员」这些要测的条件。
+// ==========================================================================
+
+section('11. 模块包：探测 / 兼容性 / PID 扫描 / 清单 / 写入 / 还原')
+
+const packRoot = join(sandbox, 'pack-proj')
+const put = (rel: string, body: string): void => {
+  const p = join(packRoot, rel)
+  mkdirSync(join(p, '..'), { recursive: true })
+  writeFileSync(p, body, 'utf8')
+}
+
+put(
+  'CMakeLists.txt',
+  `cmake_minimum_required(VERSION 3.22)
+project(demo C CXX ASM)
+add_executable(\${CMAKE_PROJECT_NAME})
+target_sources(\${CMAKE_PROJECT_NAME} PRIVATE
+    Src/main.c
+    Src/freertos.c
+)
+`
+)
+put('Inc/main.h', '#pragma once\n#include "stm32f4xx_hal.h"\n')
+put('Inc/usart.h', '#pragma once\n#include "main.h"\nextern UART_HandleTypeDef huart1;\n')
+put(
+  'Src/usart.c',
+  '#include "usart.h"\nUART_HandleTypeDef huart1;\nDMA_HandleTypeDef hdma_usart1_tx;\n'
+)
+put(
+  'bsp/boards/bsp_usart.h',
+  '#pragma once\n#include <stdint.h>\nextern void usart1_tx_dma_enable(uint8_t *data, uint16_t len);\n'
+)
+put(
+  'application/pid.h',
+  '#pragma once\ntypedef struct { float Kp, Ki, Kd, max_out, max_iout; } pid_type_def;\n'
+)
+put(
+  'application/gimbal_task.h',
+  `#pragma once
+#include "pid.h"
+typedef struct { float kp, ki, kd, max_out, max_iout; } gimbal_PID_t;
+typedef struct {
+    gimbal_PID_t gimbal_motor_absolute_angle_pid;
+    pid_type_def gimbal_motor_gyro_pid;
+    float absolute_angle;
+} gimbal_motor_t;
+extern const gimbal_motor_t *get_yaw_motor_point(void);
+`
+)
+// 这个类型的成员没有任何全局实例 —— 验证工具「不瞎猜实例名」(bug 回归)
+put(
+  'application/other_task.h',
+  '#pragma once\n#include "pid.h"\ntypedef struct { pid_type_def some_pid; } other_t;\n'
+)
+put(
+  'application/remote_control.h',
+  `#pragma once
+typedef struct { struct { short ch[5]; } rc; } RC_ctrl_t;
+extern const RC_ctrl_t *get_remote_control_point(void);
+`
+)
+put('application/remote_control.c', '#include "remote_control.h"\n#define SBUS_FORWARD_TO_USART1 1\n')
+put(
+  'Src/freertos.c',
+  '#include "cmsis_os.h"\n/* USER CODE END Header */\n/* USER CODE BEGIN Variables */\n'
+)
+put('Middlewares/rtos/cmsis_os.h', '#pragma once\n')
+
+const vofaPack = loadPack('vofa')
+check('Pack: 能装载 vofa 包', vofaPack !== null && (vofaPack?.files.length ?? 0) > 0)
+check(
+  'Pack: 包列表包含 vofa',
+  listPacks().some((p) => p.id === 'vofa'),
+  listPacks()
+    .map((p) => p.id)
+    .join(',')
+)
+
+if (vofaPack) {
+  const facts = inspectProject(packRoot)
+  const compat = checkPackCompat(vofaPack, packRoot, facts)
+  const u1 = facts.uarts.find((u) => u.name === 'huart1')
+
+  check(
+    'Pack: 合成工程不阻塞安装',
+    !compat.blocked,
+    JSON.stringify(compat.checks.filter((c) => c.level === 'err'))
+  )
+  check(
+    'Pack: 认到 huart1 有 TX DMA、没有 RX DMA',
+    u1?.txDma === 'hdma_usart1_tx' && u1?.rxDma === null,
+    `${u1?.txDma} / ${u1?.rxDma}`
+  )
+  check(
+    'Pack: 没 RX DMA 时自动选逐字节中断',
+    compat.derived.rxMode === 'it',
+    String(compat.derived.rxMode)
+  )
+  check(
+    'Pack: 没有中断入口时自动让模块自带',
+    compat.derived.builtinIrq === true,
+    String(compat.derived.builtinIrq)
+  )
+  // bug 回归：不能因为「文件里出现过这个词」就当声明处
+  //（工具自己生成的 vofa_config.h 里也有 usart1_tx_dma_enable）
+  check(
+    'Pack: TX 函数的声明头文件是 bsp_usart.h（要求真有 extern，不是只看出现过）',
+    facts.symbolHeaders.get('usart1_tx_dma_enable') === 'bsp/boards/bsp_usart.h',
+    String(facts.symbolHeaders.get('usart1_tx_dma_enable'))
+  )
+  check(
+    'Pack: 遥控器访问器的声明头文件是 remote_control.h',
+    facts.symbolHeaders.get('get_remote_control_point') === 'application/remote_control.h',
+    String(facts.symbolHeaders.get('get_remote_control_point'))
+  )
+
+  // ---- PID 扫描 ----
+  const cands = scanPidStructs(packRoot)
+  const gm = cands.find((c) => c.name === 'gimbal_motor_gyro_pid')
+  check('PID: 扫到结构体成员', Boolean(gm))
+  check(
+    'PID: 识别为 gimbal_motor_t 的成员',
+    gm?.isMember === true && gm?.ownerType === 'gimbal_motor_t',
+    `${gm?.isMember} / ${gm?.ownerType}`
+  )
+  check(
+    'PID: 云台成员给出可直接用的表达式与判空',
+    gm?.suggestedExpr === 'get_yaw_motor_point()->gimbal_motor_gyro_pid' &&
+      gm?.suggestedGuard === 'get_yaw_motor_point()',
+    gm?.suggestedExpr
+  )
+  const orphan = cands.find((c) => c.name === 'some_pid')
+  check(
+    'PID: 查不到全局实例时留空并标记 needsInstance（不编变量名）',
+    orphan?.needsInstance === true && orphan?.suggestedExpr === '',
+    `needsInstance=${orphan?.needsInstance} expr="${orphan?.suggestedExpr}"`
+  )
+
+  // ---- 清单：只算不写 ----
+  const bindings = {
+    pids: [
+      {
+        prefix: 'yaw_ang',
+        pidType: 'gimbal_PID_t' as const,
+        expr: 'get_yaw_motor_point()->gimbal_motor_absolute_angle_pid',
+        guard: 'get_yaw_motor_point()',
+        include: 'application/gimbal_task.h'
+      },
+      {
+        prefix: 'yaw_spd',
+        pidType: 'pid_type_def' as const,
+        expr: 'get_yaw_motor_point()->gimbal_motor_gyro_pid',
+        guard: 'get_yaw_motor_point()',
+        include: facts.headers.get('pid.h')
+      }
+    ],
+    channels: [
+      {
+        name: 'yaw_get',
+        expr: 'get_yaw_motor_point()->absolute_angle',
+        guard: 'get_yaw_motor_point()'
+      },
+      {
+        name: 'rc_ch0',
+        mirrorFrom: 'get_remote_control_point()->rc.ch[0]',
+        guard: 'get_remote_control_point()',
+        include: 'application/remote_control.h'
+      }
+    ]
+  }
+  const plan = planPackInstall({
+    packId: 'vofa',
+    root: packRoot,
+    params: { ...compat.derived, sendHz: 50 },
+    bindings
+  })
+  check('清单: 不阻塞', !plan.blocked)
+  check(
+    '清单: 5 个新增 + 3 个补丁',
+    plan.changes.filter((c) => c.action === 'create').length === 5 &&
+      plan.changes.filter((c) => c.action === 'patch').length === 3,
+    plan.changes.map((c) => `${c.action}:${c.path}`).join(' ')
+  )
+  check(
+    '清单: 只算不写 —— 磁盘上还没有 application/vofa',
+    !existsSync(join(packRoot, 'application/vofa'))
+  )
+
+  // ---- 生成内容 ----
+  const cfg = renderConfig(vofaPack, { ...compat.derived, sendHz: 50 }, facts)
+  check('生成: RX_MODE=2（逐字节中断）', /#define VOFA_RX_MODE\s+2/.test(cfg))
+  check('生成: USE_BUILTIN_IRQ=1', /#define VOFA_USE_BUILTIN_IRQ\s+1/.test(cfg))
+  check(
+    '生成: TX 头文件是 bsp_usart.h（不是自己 include 自己）',
+    /#define VOFA_TX_HEADER\s+"bsp_usart\.h"/.test(cfg),
+    cfg.match(/VOFA_TX_HEADER.*/)?.[0]
+  )
+  const bind = renderBind(vofaPack, bindings, facts)
+  check('生成: 绑定体带判空', bind.includes('if (get_yaw_motor_point() != NULL)'))
+  check(
+    '生成: PID 走对应的辅助函数',
+    bind.includes('vofa_reg_pid_gimbal(') && bind.includes('vofa_reg_pid_std(')
+  )
+  check(
+    '生成: 非 fp32 通道生成 fp32 镜像与刷新回调',
+    bind.includes('static fp32 vofa_mirror_') && bind.includes('void vofa_bind_tick(void)')
+  )
+  check('生成: include 了遥控器头文件', bind.includes('#include "remote_control.h"'))
+
+  // ---- 写入 ----
+  const apply = applyPackInstall(plan)
+  check('写入: 成功且无错误', apply.ok, apply.errors.join(';'))
+  check('写入: 拿到快照 id（拿不到就该中止）', Boolean(apply.snapshotId))
+  // bug 回归：writeFileSync 不建父目录，漏了这步 application/vofa/ 会是空的
+  check(
+    '写入: 新建目录被自动创建，5 个文件都在',
+    ['vofa_task.c', 'vofa_task.h', 'vofa_types.h', 'vofa_config.h', 'vofa_bind.c'].every((f) =>
+      existsSync(join(packRoot, 'application/vofa', f))
+    )
+  )
+  check(
+    '写入: CMakeLists 加了两个源文件',
+    (() => {
+      const t = readFileSync(join(packRoot, 'CMakeLists.txt'), 'utf8')
+      return t.includes('application/vofa/vofa_task.c') && t.includes('application/vofa/vofa_bind.c')
+    })()
+  )
+  check(
+    '写入: freertos.c 建了任务',
+    readFileSync(join(packRoot, 'Src/freertos.c'), 'utf8').includes('osThreadCreate(osThread(vofa)')
+  )
+
+  // ---- 还原 ----
+  const back = restoreSnapshot(packRoot, apply.snapshotId!)
+  check('还原: 无错误', back.errors.length === 0, back.errors.join(';'))
+  check('还原: 删掉了 5 个新建文件', back.removed.length === 5, String(back.removed.length))
+  // bug 回归：文件删了但空目录留着，看着像「装了一半」
+  check('还原: 空的 application/vofa 目录也被清掉', !existsSync(join(packRoot, 'application/vofa')))
+  check(
+    '还原: CMakeLists 回到原样',
+    !readFileSync(join(packRoot, 'CMakeLists.txt'), 'utf8').includes('vofa')
+  )
+  check(
+    '还原: freertos.c 回到原样',
+    !readFileSync(join(packRoot, 'Src/freertos.c'), 'utf8').includes('vofa')
+  )
+  check(
+    'Pack: 还原只动工程，没碰 packs 目录本身',
+    readPackFile('vofa', 'vofa_task.c')?.includes('vofa_bind_all') === true
   )
 }
 

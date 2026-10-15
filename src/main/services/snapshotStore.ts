@@ -10,7 +10,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import type { RestoreResult, SnapshotMeta } from '@shared/types'
 import { resolveInsideProject } from './writer'
 
@@ -166,5 +166,34 @@ export function restoreSnapshot(projectRoot: string, snapshotId: string): Restor
     }
   }
 
+  // 还原把新建的文件删掉之后，它所在的目录可能就空了（例如 application/vofa/）。
+  // 空目录本身无害，但看着像「装了一半」，所以往上清到工程根为止。
+  // 只删**确实空**的目录，且有内容就停 —— 不会碰用户自己的东西。
+  pruneEmptyDirs(projectRoot, result.removed)
+
   return result
+}
+
+/** 删掉 removed 文件留下的空目录，逐级往上，遇到非空就停 */
+function pruneEmptyDirs(projectRoot: string, removed: string[]): void {
+  const rootAbs = resolve(projectRoot)
+  const candidates = new Set<string>()
+  for (const f of removed) {
+    let d = dirname(f)
+    while (d.length > rootAbs.length && d.startsWith(rootAbs)) {
+      candidates.add(d)
+      d = dirname(d)
+    }
+  }
+  // 由深到浅，先删子目录再删父目录，否则父目录看着还不空
+  for (const d of [...candidates].sort((a, b) => b.length - a.length)) {
+    try {
+      // rmSync 删目录必须带 recursive —— 只给 force 会抛 EISDIR，
+      // 而下面那个 catch 会把它吞掉，于是「清空目录」看着像做了其实没做。
+      // 这里已经确认过目录是空的，所以 recursive 不会误删东西。
+      if (existsSync(d) && readdirSync(d).length === 0) rmSync(d, { recursive: true, force: true })
+    } catch {
+      /* 删不掉无所谓，不是错误 */
+    }
+  }
 }
