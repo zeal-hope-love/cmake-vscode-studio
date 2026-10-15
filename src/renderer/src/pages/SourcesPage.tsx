@@ -247,6 +247,31 @@ export function SourcesPage(): React.JSX.Element {
       <PageBody>
         {!scan ? null : (
           <>
+            {/*
+              解析没看全时必须拦住「加入构建」。
+              只看根 CMakeLists.txt 会漏掉 include()/add_subdirectory() 里的源文件，
+              把本来就在构建里的报成遗漏；照着加会重复编译、链接报 multiple definition。
+              宁可说「我看不全」，也不能给一份看起来确定的错清单。
+            */}
+            {scan.stats.cmakeUnresolved.length > 0 && (
+              <Alert kind="warn">
+                <div className="bold mb-8">
+                  这个 CMake 工程的构建定义我<b>没看全</b>，下面的「不在构建里」可能不准，已先禁用加入。
+                </div>
+                {scan.stats.cmakeUnresolved.slice(0, 6).map((u, i) => (
+                  <div key={i} className="small mono">
+                    · {u}
+                  </div>
+                ))}
+                {scan.stats.cmakeUnresolved.length > 6 && (
+                  <div className="small faint">…还有 {scan.stats.cmakeUnresolved.length - 6} 条</div>
+                )}
+                <div className="small" style={{ marginTop: 6 }}>
+                  已经读了：<span className="mono">{scan.stats.cmakeParsedFiles.join('、')}</span>
+                </div>
+              </Alert>
+            )}
+
             {scan.stats.cmakeListsCount > 1 && (
               <Alert kind="info">
                 这个工程有 <b>{scan.stats.cmakeListsCount}</b> 个 CMakeLists.txt。判断「有没有进构建」时
@@ -298,7 +323,7 @@ export function SourcesPage(): React.JSX.Element {
                     <Button
                       size="sm"
                       variant="primary"
-                      disabled={checked.size === 0}
+                      disabled={checked.size === 0 || scan.stats.cmakeUnresolved.length > 0}
                       onClick={() => void openPreview([...checked], [])}
                     >
                       加入构建{checked.size ? `（${checked.size}）` : ''}

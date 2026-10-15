@@ -1110,11 +1110,19 @@ export function buildProjectBuildModel(root: string): ProjectBuildModel {
 
       if (cmd.command === 'target_include_directories') {
         for (const raw of vals.slice(1)) {
-          if (/^(PRIVATE|PUBLIC|INTERFACE|SYSTEM)$/i.test(raw) || raw.startsWith('$<')) continue
+          if (/^(PRIVATE|PUBLIC|INTERFACE|SYSTEM|BEFORE|AFTER)$/i.test(raw) || raw.startsWith('$<'))
+            continue
           const t = expandToken(raw, vars, sourceDir, listDir)
           if (t.includes('${')) continue
-          const rp = toRelPathUnder(t, listDir, root)
-          if (rp && existsSync(join(root, rp.split('/').join(sep)))) includeDirs.add(rp)
+          // set(X a b c) 展开出来是 'a;b;c'，必须按 ; 拆成一个个目录。
+          // 少了这一步整串会被当成一个路径、解不出来，include 目录永远是 0 ——
+          // 源文件那边早就按 ; 拆了，这里漏了。
+          for (const piece of t.split(';')) {
+            const p = piece.trim()
+            if (!p) continue
+            const rp = toRelPathUnder(p, listDir, root)
+            if (rp && existsSync(join(root, rp.split('/').join(sep)))) includeDirs.add(rp)
+          }
         }
       }
     }

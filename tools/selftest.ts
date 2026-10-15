@@ -14,11 +14,15 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { DEFAULT_SETTINGS, type AppSettings } from '@shared/types'
 import { defaultGenOptions, generateBundle } from '../src/main/services/generators'
 import { scanProject } from '../src/main/services/scanner'
-import { buildCmakeModel, collectReferencedPaths } from '../src/main/services/cmakeModel'
+import {
+  buildCmakeModel,
+  buildProjectBuildModel,
+  collectReferencedPaths
+} from '../src/main/services/cmakeModel'
 import { planSourceEdit } from '../src/main/services/cmakeEdit'
 import { scanSources, renderNewFile } from '../src/main/services/sourceScanner'
 import { detectTools, findSvdFile } from '../src/main/services/toolDetector'
@@ -1444,6 +1448,79 @@ if (vofaPack) {
     readPackFile('vofa', 'vofa_task.c')?.includes('vofa_bind_all') === true
   )
 }
+
+// ==========================================================================
+// 12. 构建图：include() / add_subdirectory() / 变量 / GLOB
+//
+// 这一节的由来：有工程把源文件清单放在 include() 进来的 .cmake 里（根 CMakeLists
+// 里那个 target_sources 是 CubeMX 生成的空占位），只看根文件就会把它们全报成
+// 「不在构建里」—— 用户照着点「加入构建」会重复编译、链接报 multiple definition。
+// ==========================================================================
+
+section('12. 构建图：include / add_subdirectory / 变量 / GLOB')
+
+const bgRoot = join(sandbox, 'build-graph')
+const bgPut = (rel: string, body: string): void => {
+  const p = join(bgRoot, rel)
+  mkdirSync(dirname(p), { recursive: true })
+  writeFileSync(p, body, 'utf8')
+}
+
+bgPut(
+  'CMakeLists.txt',
+  `project(demo C)
+add_executable(demo)
+add_subdirectory(sub)
+include(cmake/user.cmake)
+file(GLOB EXTRA src/*.c)
+`
+)
+bgPut(
+  'cmake/user.cmake',
+  `set(APP_ROOT \${CMAKE_CURRENT_LIST_DIR}/..)
+set(APP_Src
+    \${APP_ROOT}/app/a.c
+    \${APP_ROOT}/app/b.c
+)
+target_sources(demo PRIVATE \${APP_Src})
+target_include_directories(demo PRIVATE \${APP_ROOT}/app)
+`
+)
+bgPut(
+  'sub/CMakeLists.txt',
+  `set(SUB_Src \${CMAKE_CURRENT_SOURCE_DIR}/c.c)
+target_sources(demo PRIVATE \${SUB_Src})
+`
+)
+bgPut('app/a.c', 'int a;\n')
+bgPut('app/b.c', 'int b;\n')
+bgPut('sub/c.c', 'int c;\n')
+bgPut('src/d.c', 'int d;\n')
+
+const bg = buildProjectBuildModel(bgRoot)
+check(
+  '构建图: 跟进了 include() 的 .cmake',
+  bg.parsedFiles.includes('cmake/user.cmake'),
+  bg.parsedFiles.join(',')
+)
+check(
+  '构建图: 跟进了 add_subdirectory() 的子 CMakeLists',
+  bg.parsedFiles.includes('sub/CMakeLists.txt'),
+  bg.parsedFiles.join(',')
+)
+// 变量值里带内置变量（${CMAKE_CURRENT_LIST_DIR}/..）也要能展开 —— 这是第一版只解出 0 个源文件的原因
+check(
+  '构建图: include 里的源文件算进来了（嵌套变量展开）',
+  bg.sources.includes('app/a.c') && bg.sources.includes('app/b.c'),
+  bg.sources.join(',')
+)
+check('构建图: 子目录的源文件也算进来了', bg.sources.includes('sub/c.c'), bg.sources.join(','))
+check('构建图: include 目录按 ; 拆开了', bg.includeDirs.includes('app'), bg.includeDirs.join(','))
+check(
+  '构建图: file(GLOB) 会记进「没看全」，界面据此禁用加入',
+  bg.unresolved.some((u) => /GLOB/.test(u)),
+  bg.unresolved.join(' / ')
+)
 
 // ==========================================================================
 // 汇总
