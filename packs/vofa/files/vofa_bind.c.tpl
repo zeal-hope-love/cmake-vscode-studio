@@ -30,8 +30,20 @@ ${EXTRA_INCLUDES}
  * 用辅助函数而不是宏，是为了能直接取成员地址（宏里 &p->Kp 和逗号会打架）。
  * ------------------------------------------------------------------------ */
 ${PID_HELPERS}
+${MIRROR_DECL}
 
 void vofa_bind_all(void)
 {
 ${BIND_BODY}
+}
+
+/**
+  * @brief  每个发送周期调一次 —— 刷新需要镜像的通道
+  *
+  * 为什么要镜像：vofa_reg_channel 收的是 `const fp32 *`，而遥控器是 `int16_t ch[5]`。
+  * 类型对不上，只能先拷到 fp32 数组里再把数组地址注册进去。
+  */
+void vofa_bind_tick(void)
+{
+${TICK_BODY}
 }

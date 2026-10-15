@@ -206,6 +206,15 @@ bool_t vofa_reg_channel(const char *name, const fp32 *addr)
  * vofa_reg_pid() 搬去了 vofa_bind.c —— 它要 cast 项目的 pid_type_def / gimbal_PID_t，
  * 属于「跟具体工程绑定」的东西；留在这里这个文件就不通用了。
  */
+
+/**
+  * @brief  由 vofa_bind.c 实现，每个发送周期调一次
+  *
+  * 存在的理由：有些想监看的东西**类型不是 fp32**，注册不了 ——
+  * 最典型的是遥控器（`int16_t ch[5]`）。这种要先拷进一个 static 的 fp32 镜像，
+  * 再注册镜像的地址；镜像的刷新就放在这个回调里。
+  */
+extern void vofa_bind_tick(void);
 //---------------------------- 命令解析层 ----------------------------
 //简易分词: 空格/Tab 分隔, 返回当前 token 并推进 p
 static char *vofa_next_token(char **p)
@@ -450,7 +459,10 @@ void vofa_task(void const *argument)
             vofa_rx_byte(b);
         }
 
-        //4. 波形发送
+        //4. 刷新需要镜像的通道（遥控器那类非 fp32 的量）
+        vofa_bind_tick();
+
+        //5. 波形发送
         vofa_send_wave();
 
         osDelay(1000u / VOFA_SEND_HZ);

@@ -11,8 +11,8 @@
  *   · remote_control.c 加宏   → 在文件头 include 之后插一行，已存在则不重复加
  */
 
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, posix } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, posix } from 'node:path'
 import type {
   PackApplyResult,
   PackBindings,
@@ -84,11 +84,11 @@ export function renderBind(pack: PackManifest, bindings: PackBindings, facts: Pr
     const h = facts.headers.get('pid.h')
     if (h) incs.add(h)
   }
-  for (const p of bindings.pids) {
-    // 界面从「扫到的候选」带过来它声明在哪个头文件里 —— 比自己猜靠谱：
-    // 按文件名猜 gimbal 会命中 gimbal_behaviour.h，而定义 gimbal_PID_t 的是 gimbal_task.h
-    if (p.pidType === 'gimbal_PID_t' && p.include) incs.add(p.include)
-  }
+  // 每个绑定项都能带 `include` —— 界面从「扫到的候选」把它声明在哪个头文件带过来。
+  // 之前只对 gimbal_PID_t 生效，于是引用了 shoot_control / 遥控器访问器的绑定
+  // 生成出来就报 undeclared。
+  for (const p of bindings.pids) if (p.include) incs.add(p.include)
+  for (const c of bindings.channels) if (c.include) incs.add(c.include)
   // 只用文件名：头文件由 -I 路径找，写成 "Inc/usart.h" 反而解析不到
   const extraIncludes = [...incs].map((h) => `#include "${posix.basename(h)}"`).join('\n')
 
@@ -182,23 +182,71 @@ static bool_t vofa_reg_pid_gimbal(const char *prefix, gimbal_PID_t *p)
       '    '
     )
   }
+  /**
+   * 监看通道分两种：
+   *   直接注册 —— 源本来就是 fp32（或能当 fp32 读）
+   *   镜像注册 —— 源类型不是 fp32（遥控器 int16_t ch[5] 这种），
+   *               先生成一个 static fp32 镜像，注册镜像地址，每个周期拷一次
+   */
+  const mirrors = bindings.channels.map((c, idx) => ({ c, idx })).filter((x) => x.c.mirrorFrom)
+
   if (bindings.channels.length) {
     if (bindings.pids.length) lines.push('')
     lines.push('    //---- 监看通道（顺序 = VOFA 里的 ch0、ch1…）----')
     emit(
-      bindings.channels.map((c) => ({
+      bindings.channels.map((c, idx) => ({
         guard: c.guard,
-        code: `(void)vofa_reg_channel("${c.name}", &(${c.expr}));`
+        code: c.mirrorFrom
+          ? `(void)vofa_reg_channel("${c.name}", &vofa_mirror_${idx});`
+          : `(void)vofa_reg_channel("${c.name}", &(${c.expr ?? c.name}));`
       })),
       '    '
     )
   }
 
+  const mirrorDecl =
+    mirrors.length > 0
+      ? mirrors
+          .map(
+            ({ c, idx }) =>
+              `/* ${c.name}：源不是 fp32，用这个镜像寄存器注册 */\nstatic fp32 vofa_mirror_${idx};`
+          )
+          .join('\n')
+      : '/* 没有需要镜像的通道 */'
+
+  const tickBody = mirrors.length
+    ? (() => {
+        const out: string[] = ['    //把源值拷进镜像（类型不是 fp32 的那些通道）']
+        let i = 0
+        while (i < mirrors.length) {
+          const g = mirrors[i].c.guard?.trim()
+          const sameGuard = (k: number): boolean => mirrors[k].c.guard?.trim() === g
+          if (!g) {
+            out.push(`    vofa_mirror_${mirrors[i].idx} = (fp32)(${mirrors[i].c.mirrorFrom});`)
+            i += 1
+            continue
+          }
+          let j = i
+          while (j < mirrors.length && sameGuard(j)) j += 1
+          out.push(`    if (${g} != NULL)`)
+          out.push('    {')
+          for (let k = i; k < j; k++) {
+            out.push(`        vofa_mirror_${mirrors[k].idx} = (fp32)(${mirrors[k].c.mirrorFrom});`)
+          }
+          out.push('    }')
+          i = j
+        }
+        return out.join('\n')
+      })()
+    : '    //（没有需要镜像的通道）'
+
   const body = fillTemplate(tpl, {
     GENERATED_AT: now(),
     EXTRA_INCLUDES: extraIncludes,
     PID_HELPERS: helpers.join('\n\n'),
-    BIND_BODY: lines.join('\n')
+    MIRROR_DECL: mirrorDecl,
+    BIND_BODY: lines.join('\n'),
+    TICK_BODY: tickBody
   })
   return body
 }
@@ -431,6 +479,13 @@ export function applyPackInstall(plan: PackPlan): PackApplyResult {
     res.errors.push(`存快照失败，已中止：${(err as Error).message}`)
     return res
   }
+  // captureSnapshot 存不下时会**吞掉异常返回 null**。这里必须当成失败处理：
+  // 这一页给用户的承诺就是「先存快照，可一键还原」，没有快照还照写，
+  // 等于把「改坏了能回去」变成一句空话。
+  if (!res.snapshotId) {
+    res.errors.push('没能存下快照，为避免改坏了无法还原，已中止写入（一个文件都没动）')
+    return res
+  }
 
   // 2) 写
   for (const c of todo) {
@@ -440,6 +495,10 @@ export function applyPackInstall(plan: PackPlan): PackApplyResult {
         rmSync(abs, { force: true })
         res.written.push(`（删除）${c.path}`)
       } else if (c.after !== null) {
+        // 目标目录可能还不存在（application/vofa/ 就是新建的）。
+        // writeFileSync 不会替你建父目录 —— 漏了这步会抛 ENOENT，
+        // 而且补丁那几步照样成功，留下「改了 CMakeLists 但没有源文件」的半成品。
+        mkdirSync(dirname(abs), { recursive: true })
         writeFileSync(abs, c.after, 'utf8')
         res.written.push(c.path)
       }

@@ -860,6 +860,8 @@ export interface PackInspectResult {
   report: import('./packTypes').PackCompatReport
   pidCandidates: import('./packTypes').PidCandidate[]
   existingFiles: string[]
+  /** 符号名 → 声明它的头文件。生成 #include 要用（例如遥控器访问器） */
+  symbolHeaders: Array<{ symbol: string; file: string }>
 }
 
 /** packPlan / packApply 的入参 */

@@ -115,8 +115,20 @@ export interface PidCandidate {
   /** 相对工程根的路径 */
   file: string
   line: number
-  /** 给界面显示的建议表达式，例如 `yaw->` */
+  /** 给界面显示的一句提示，例如「yaw-> 或 pitch->」 */
   hint: string
+  /**
+   * 点「用这个」时预填的**完整表达式**。
+   * 这是猜的，用户可以直接改 —— 但多数情况下改一下 yaw/pitch 就能用。
+   */
+  suggestedExpr: string
+  /** 配套的判空表达式；为空表示不需要判空（例如 '.' 访问全局对象） */
+  suggestedGuard: string
+  /**
+   * true = 工程里查不到这个类型对应的全局实例，表达式没法自动拼，
+   * suggestedExpr 会留空，要用户自己填。**不猜** —— 猜错要编译才发现。
+   */
+  needsInstance?: boolean
 }
 
 // --------------------------------------------------------------------------
@@ -147,10 +159,23 @@ export interface PidBinding {
 export interface ChannelBinding {
   /** 通道名（回显用） */
   name: string
-  /** 完整变量表达式，例如 `get_yaw_motor_point()->absolute_angle` */
-  expr: string
+  /**
+   * 直接注册的表达式，例如 `get_yaw_motor_point()->absolute_angle`。
+   * 要求类型是 fp32（或能直接当 fp32 读的浮点量）。和 mirrorFrom 二选一。
+   */
+  expr?: string
+  /**
+   * 需要**镜像**的源表达式。填了就自动生成一个 static fp32 镜像变量，
+   * 注册镜像的地址、并在每个周期把源值拷进去。
+   *
+   * 什么时候要用：源的类型不是 fp32 —— 最典型的是遥控器 `int16_t ch[5]`，
+   * vofa_reg_channel 收的是 `const fp32 *`，类型对不上，只能镜像。
+   */
+  mirrorFrom?: string
   /** 同 PidBinding.guard */
   guard?: string
+  /** 表达式里用到的符号声明在哪个头文件（例如 get_remote_control_point → remote_control.h） */
+  include?: string
 }
 
 export interface PackBindings {

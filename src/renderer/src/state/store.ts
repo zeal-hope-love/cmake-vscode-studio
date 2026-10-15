@@ -38,6 +38,7 @@ import {
 export type PageKey =
   | 'project'
   | 'sources'
+  | 'packs'
   | 'launch'
   | 'tasks'
   | 'settings'

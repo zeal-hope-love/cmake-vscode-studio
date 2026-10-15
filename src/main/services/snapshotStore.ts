@@ -40,7 +40,10 @@ interface SnapshotFile extends SnapshotMeta {
 }
 
 function projectKey(projectRoot: string): string {
-  return createHash('sha1').update(projectRoot.toLowerCase()).digest('hex').slice(0, 12)
+  // 归一化再算哈希：同一个工程用 C:/x 和 C:\x 写进来会得到不同的键，
+  // 于是「明明存了快照却列不出来」。结尾的分隔符也一并去掉。
+  const normalized = projectRoot.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+  return createHash('sha1').update(normalized).digest('hex').slice(0, 12)
 }
 
 function projectDir(projectRoot: string): string {

@@ -198,11 +198,21 @@ export function inspectProject(root: string): ProjectFacts {
       for (const sym of [
         'usart1_tx_dma_enable',
         'HAL_UARTEx_ReceiveToIdle_DMA',
-        'HAL_UART_Receive_IT'
+        'HAL_UART_Receive_IT',
+        // 生成绑定表达式会用到的访问器，顺手记下它们声明在哪个头文件
+        'get_remote_control_point',
+        'get_yaw_motor_point',
+        'get_pitch_motor_point'
       ]) {
         if (text.includes(sym) && !facts.symbols.has(sym)) facts.symbols.set(sym, r)
-        // 头文件里的那个才是「声明」，生成 #include 要用它
-        if (text.includes(sym) && /\.h$/i.test(e.name) && !facts.symbolHeaders.has(sym)) {
+        // 「声明它的头文件」必须是**真的声明**（`extern ... sym(...)`），不能只看出现。
+        // 否则工具自己生成的 vofa_config.h 里也有 usart1_tx_dma_enable 这个词
+        // （在 VOFA_TX_FN 宏里），会被误当成声明处 —— 于是生成出
+        // #define VOFA_TX_HEADER "vofa_config.h"，自己 include 自己，函数还是没声明。
+        const declares = new RegExp(
+          `\\bextern\\b[^;{}]*\\b${sym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\(`
+        )
+        if (/\.h$/i.test(e.name) && declares.test(text) && !facts.symbolHeaders.has(sym)) {
           facts.symbolHeaders.set(sym, r)
         }
       }
@@ -468,6 +478,14 @@ const PID_TYPE_RE = /^\s*(pid_type_def|gimbal_PID_t)\s+([A-Za-z_]\w*)\s*(\[[^\]]
  */
 export function scanPidStructs(root: string): PidCandidate[] {
   const out: PidCandidate[] = []
+  /**
+   * 类型名 → 工程里**真实存在**的全局实例名（来自 `extern Type name;`）。
+   * 早期版本对 chassis_move_t 直接编了个 "chassis_move"，生成代码报 undeclared ——
+   * 这个变量工程里压根没有，而且猜错了不编译根本发现不了。
+   */
+  const instanceByType = new Map<string, string>()
+  /** 工程里声明过的函数名，用来确认访问器真的存在 */
+  const declaredFns = new Set<string>()
 
   const walk = (dir: string, depth: number): void => {
     if (depth > 10) return
@@ -491,6 +509,14 @@ export function scanPidStructs(root: string): PidCandidate[] {
         text = readFileSync(full, 'utf8')
       } catch {
         continue
+      }
+
+      // 0) 收集全局实例与已声明的函数（要给候选拼表达式用）
+      for (const m of text.matchAll(/\bextern\s+([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*;/g)) {
+        if (!instanceByType.has(m[1])) instanceByType.set(m[1], m[2])
+      }
+      for (const m of text.matchAll(/\bextern\s+[A-Za-z_][\w \t*]*?\b([A-Za-z_]\w*)\s*\(/g)) {
+        declaredFns.add(m[1])
       }
 
       // 1) 找出所有 typedef struct 块的行号范围
@@ -518,7 +544,8 @@ export function scanPidStructs(root: string): PidCandidate[] {
           isArray: Boolean(m[3]),
           file: relPath,
           line,
-          hint: owner ? suggestAccessor(owner.name) : ''
+          hint: owner ? suggestHint(owner.name) : '全局变量',
+          ...suggestExpr(owner?.name ?? null, name, instanceByType, declaredFns)
         })
       }
     }
@@ -528,11 +555,47 @@ export function scanPidStructs(root: string): PidCandidate[] {
   return out.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line)
 }
 
-/** 按结构体名猜一个访问器/实例前缀，只是给界面的提示，用户可以改 */
-function suggestAccessor(typeName: string): string {
-  if (/gimbal_motor/i.test(typeName)) return 'yaw-> 或 pitch->'
-  if (/shoot/i.test(typeName)) return 'shoot_control.'
-  if (/chassis_motor/i.test(typeName)) return 'chassis_motor[i].'
-  if (/chassis/i.test(typeName)) return 'chassis_move.'
-  return '实例.'
+/** 给界面显示的一句提示 */
+function suggestHint(typeName: string): string {
+  if (/gimbal_motor/i.test(typeName)) return 'yaw-> 或 pitch->（预填的是 yaw，要调 pitch 就改一下）'
+  return '要填「实例.字段」，实例名得工程里真实存在'
+}
+
+/**
+ * 猜一个**可以直接用**的表达式。
+ *
+ * 为什么不是只给一句「yaw-> 或 pitch->」：那样用户还得自己拼完整表达式，
+ * 等于变相手输。这里按结构体名猜一个常用访问方式，预填进去，用户最多改个 yaw/pitch。
+ *
+ * 判空也跟着一起给：`get_xxx_point()` 在模块初始化前可能返回 NULL，
+ * 原实现里是判过空的，生成代码不能丢这一步。
+ */
+function suggestExpr(
+  ownerType: string | null,
+  field: string,
+  instanceByType: Map<string, string>,
+  declaredFns: Set<string>
+): {
+  suggestedExpr: string
+  suggestedGuard: string
+  needsInstance?: boolean
+} {
+  if (!ownerType) return { suggestedExpr: field, suggestedGuard: '' }
+
+  // 云台：有配套访问器就用它，顺带给出判空表达式（原实现里也判过空）
+  if (/gimbal_motor/i.test(ownerType) && declaredFns.has('get_yaw_motor_point')) {
+    return {
+      suggestedExpr: `get_yaw_motor_point()->${field}`,
+      suggestedGuard: 'get_yaw_motor_point()'
+    }
+  }
+
+  // 其它类型：只在工程里**确实存在**该类型的全局实例时才敢拼。
+  // 早期版本对 chassis_move_t 直接编了个 "chassis_move"，结果生成代码报
+  // 'chassis_move' undeclared —— 这个变量工程里压根没有，而且猜错了不编译发现不了。
+  const inst = instanceByType.get(ownerType)
+  if (inst) return { suggestedExpr: `${inst}.${field}`, suggestedGuard: '' }
+
+  // 查不到就**留空**并标记出来，让界面提示用户先填实例
+  return { suggestedExpr: '', suggestedGuard: '', needsInstance: true }
 }

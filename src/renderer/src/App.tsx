@@ -14,6 +14,7 @@ import { Onboarding } from './components/Onboarding'
 import { Alert, Button, EmptyState, PageBody } from './components/ui'
 import ProjectPage from './pages/ProjectPage'
 import SourcesPage from './pages/SourcesPage'
+import PacksPage from './pages/PacksPage'
 import LaunchPage from './pages/LaunchPage'
 import TasksPage from './pages/TasksPage'
 import SettingsPage from './pages/SettingsPage'
@@ -28,6 +29,7 @@ import BuildPage from './pages/BuildPage'
 const PAGES: Record<PageKey, () => React.JSX.Element> = {
   project: ProjectPage,
   sources: SourcesPage,
+  packs: PacksPage,
   launch: LaunchPage,
   tasks: TasksPage,
   settings: SettingsPage,

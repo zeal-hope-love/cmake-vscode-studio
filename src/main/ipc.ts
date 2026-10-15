@@ -389,7 +389,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       return {
         report: checkPackCompat(pack, projectRoot, facts),
         pidCandidates: scanPidStructs(projectRoot),
-        existingFiles: facts.existingVofa
+        existingFiles: facts.existingVofa,
+        symbolHeaders: [...facts.symbolHeaders].map(([symbol, file]) => ({ symbol, file }))
       }
     }
   )
