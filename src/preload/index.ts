@@ -17,6 +17,7 @@ import {
   type CmakeChangePreview,
   type CmakeChangeRequest,
   type CmakeScanResult,
+  type CmakeSignature,
   type ConfigTemplate,
   type CreateSourceFileResult,
   type NewFileKind,
@@ -95,6 +96,9 @@ const api: StudioApi = {
   // ---- CMake 构建目标与源文件 ----
   cmakeScan: (projectRoot) =>
     ipcRenderer.invoke(IPC.cmakeScan, projectRoot) as Promise<CmakeScanResult>,
+
+  cmakeSignature: (projectRoot) =>
+    ipcRenderer.invoke(IPC.cmakeSignature, projectRoot) as Promise<CmakeSignature>,
 
   cmakePreview: (req: CmakeChangeRequest) =>
     ipcRenderer.invoke(IPC.cmakePreview, req) as Promise<CmakeChangePreview>,

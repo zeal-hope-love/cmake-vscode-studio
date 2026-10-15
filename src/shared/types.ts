@@ -636,6 +636,16 @@ export interface CmakeScanResult {
   diagnostics: string[]
   /** 展不开变量的条目（认不出是哪个文件），界面上灰着显示 */
   unresolved: Array<{ raw: string; line: number }>
+  /** 工程里所有含源码的目录（含 '.'），给「新建文件」的下拉用 */
+  dirs: string[]
+}
+
+/** 「工程有没有变」的指纹：只 stat 目录和 CMakeLists，比全量扫描便宜得多 */
+export interface CmakeSignature {
+  dirCount: number
+  dirMtimeMax: number
+  cmakeMtimeMax: number
+  compilableCount: number
 }
 
 export interface CmakeChangeRequest {
@@ -708,6 +718,7 @@ export const IPC = {
   cmakePreview: 'cmake:preview',
   cmakeApply: 'cmake:apply',
   cmakeCreateFile: 'cmake:create-file',
+  cmakeSignature: 'cmake:signature',
 
   templateList: 'template:list',
   templateSave: 'template:save',
@@ -775,6 +786,8 @@ export interface StudioApi {
   cmakePreview(req: CmakeChangeRequest): Promise<CmakeChangePreview>
   /** 落盘（先存快照）+ 记历史 */
   cmakeApply(req: CmakeChangeRequest): Promise<CmakeApplyResult>
+  /** 算一个「工程变了没」的指纹，界面据此决定要不要重新扫描 */
+  cmakeSignature(projectRoot: string): Promise<CmakeSignature>
   /** 新建一个源码文件（骨架），不自动加入构建 */
   cmakeCreateFile(
     projectRoot: string,

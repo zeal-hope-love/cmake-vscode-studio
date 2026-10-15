@@ -11,7 +11,8 @@ import {
   applySourceChange,
   createSourceFile,
   previewSourceChange,
-  scanSources
+  scanSources,
+  signatureOf
 } from './services/sourceScanner'
 import { existsSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -348,6 +349,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   //   cmakeApply   写之前先存快照，历史里能一键还原
   //   cmakeCreateFile 建骨架文件（不自动加进构建，加不加由用户在界面上点）
   ipcMain.handle(IPC.cmakeScan, async (_e, projectRoot: string) => scanSources(projectRoot))
+
+  // 轻量指纹：界面每 2 秒问一次「变了吗」，变了才重新全量扫描
+  ipcMain.handle(IPC.cmakeSignature, async (_e, projectRoot: string) => signatureOf(projectRoot))
 
   ipcMain.handle(IPC.cmakePreview, async (_e, req: CmakeChangeRequest) => previewSourceChange(req))
 

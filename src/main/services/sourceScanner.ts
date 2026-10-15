@@ -78,6 +78,8 @@ export interface CmakeScanResult {
   diagnostics: string[]
   /** 解析不出来源文件的条目（变量展不开），界面上灰着显示 */
   unresolved: Array<{ raw: string; line: number }>
+  /** 工程里所有含源码的目录（含 '.'），给「新建文件」的下拉用 */
+  dirs: string[]
 }
 
 function walkCompilable(root: string, depth = 0, acc: string[] = []): string[] {
@@ -179,7 +181,8 @@ export function scanSources(projectRoot: string): CmakeScanResult {
       cmakeListsCount: ref.dirs.length
     },
     diagnostics: model.diagnostics,
-    unresolved
+    unresolved,
+    dirs: listSourceDirs(projectRoot)
   }
 }
 
@@ -410,4 +413,88 @@ export function peekSourceFile(
   } catch (err) {
     return { ok: false, text: '', truncated: false, error: (err as Error).message }
   }
+}
+
+// --------------------------------------------------------------------------
+// 变更探测（给界面做自动刷新用）
+// --------------------------------------------------------------------------
+
+export interface CmakeSignature {
+  /** 扫到多少个目录 */
+  dirCount: number
+  /** 目录 mtime 的最大值 —— 新增/删除文件会改父目录的 mtime */
+  dirMtimeMax: number
+  /** 所有 CMakeLists.txt 的 mtime 最大值 */
+  cmakeMtimeMax: number
+  /** 可编译文件数（用来兜底：某些文件系统上目录 mtime 不刷新） */
+  compilableCount: number
+}
+
+/**
+ * 算一个「工程有没有变」的指纹。
+ *
+ * 为什么不直接轮询 scanSources：那要遍历所有文件 + 解析所有 CMakeLists，
+ * 每秒来一次太重。这里只 stat 目录和 CMakeLists —— 新增或删除文件会改父目录的
+ * mtime，改 CMakeLists 会改它自己的 mtime，两样都能测出来，而且便宜得多。
+ *
+ * 指纹变了才去跑完整的 scanSources。
+ */
+export function signatureOf(projectRoot: string): CmakeSignature {
+  let dirCount = 0
+  let dirMtimeMax = 0
+  let cmakeMtimeMax = 0
+  let compilableCount = 0
+
+  const visit = (dir: string, depth: number): void => {
+    if (depth > 8) return
+    dirCount += 1
+    try {
+      dirMtimeMax = Math.max(dirMtimeMax, statSync(dir).mtimeMs)
+    } catch {
+      /* 读不到就算了 */
+    }
+    try {
+      cmakeMtimeMax = Math.max(cmakeMtimeMax, statSync(join(dir, 'CMakeLists.txt')).mtimeMs)
+    } catch {
+      /* 这层没有 CMakeLists */
+    }
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name)) visit(join(dir, e.name), depth + 1)
+      } else if (COMPILABLE.test(e.name)) {
+        compilableCount += 1
+      }
+    }
+  }
+
+  visit(projectRoot, 0)
+  return { dirCount, dirMtimeMax, cmakeMtimeMax, compilableCount }
+}
+
+/** 工程里所有含源码的目录（相对工程根、posix、含 '.'），给「新建文件」的下拉用 */
+export function listSourceDirs(projectRoot: string): string[] {
+  const out = new Set<string>(['.'])
+  const visit = (dir: string, rel: string, depth: number): void => {
+    if (depth > 8) return
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of entries) {
+      if (!e.isDirectory() || SKIP_DIRS.has(e.name)) continue
+      const childRel = rel ? `${rel}/${e.name}` : e.name
+      out.add(childRel)
+      visit(join(dir, e.name), childRel, depth + 1)
+    }
+  }
+  visit(projectRoot, '', 0)
+  return [...out].sort((a, b) => a.localeCompare(b))
 }

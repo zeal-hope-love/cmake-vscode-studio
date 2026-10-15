@@ -56,6 +56,10 @@ export function SourcesPage(): React.JSX.Element {
   const [filter, setFilter] = React.useState('')
   const [newName, setNewName] = React.useState('')
   const [newKind, setNewKind] = React.useState<NewFileKind>('c')
+  const [newDir, setNewDir] = React.useState('.')
+  /** 上一次的工程指纹，用来判断「外面是不是有人动了文件」 */
+  const sigRef = React.useRef('')
+  const prevOrphans = React.useRef<number | null>(null)
 
   const reload = React.useCallback(async (): Promise<void> => {
     if (!projectRoot) return
@@ -77,6 +81,61 @@ export function SourcesPage(): React.JSX.Element {
   React.useEffect(() => {
     void reload()
   }, [reload])
+
+  /**
+   * 自动识别外面新建的文件。
+   *
+   * 你在 VSCode 里新建一个 .c，这里**不需要点任何按钮**就能出现在「不在构建里」。
+   * 每 2 秒问一次主进程「工程变了没」—— 那是个只 stat 目录和 CMakeLists 的轻量指纹，
+   * 比全量扫描便宜得多；指纹真的变了才去重新解析。
+   * 窗口重新获得焦点时也立刻查一次（从编辑器切回来是最常见的时机）。
+   */
+  React.useEffect(() => {
+    if (!projectRoot) return
+    let stopped = false
+
+    const tick = async (): Promise<void> => {
+      try {
+        const s = await window.api.cmakeSignature(projectRoot)
+        const key = `${s.dirCount}|${s.dirMtimeMax}|${s.cmakeMtimeMax}|${s.compilableCount}`
+        if (!sigRef.current) {
+          sigRef.current = key
+          return
+        }
+        if (sigRef.current !== key) {
+          sigRef.current = key
+          await reload()
+        }
+      } catch {
+        /* 工程被删/权限问题时忽略，下一轮再试 */
+      }
+    }
+
+    const timer = window.setInterval(() => {
+      if (!stopped) void tick()
+    }, 2000)
+    const onFocus = (): void => {
+      void tick()
+    }
+    window.addEventListener('focus', onFocus)
+    void tick()
+
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [projectRoot, reload])
+
+  /** 新冒出来的「没进构建」文件主动提醒一次，不用自己去盯列表 */
+  React.useEffect(() => {
+    if (!scan) return
+    const n = scan.orphans.length
+    if (prevOrphans.current !== null && n > prevOrphans.current) {
+      notify('warn', `检测到 ${n - prevOrphans.current} 个新文件还没进构建，勾一下「加入构建」就行`)
+    }
+    prevOrphans.current = n
+  }, [scan, notify])
 
   if (!projectRoot || !project) {
     return (
@@ -142,7 +201,9 @@ export function SourcesPage(): React.JSX.Element {
       return
     }
     try {
-      const r = await window.api.cmakeCreateFile(projectRoot, name, newKind)
+      // 目录从下拉选，这里拼成相对工程根的路径
+      const full = newDir === '.' ? name : newDir + '/' + name
+      const r = await window.api.cmakeCreateFile(projectRoot, full, newKind)
       if (!r.ok) {
         notify('err', r.error ?? '新建失败')
         return
@@ -312,13 +373,25 @@ export function SourcesPage(): React.JSX.Element {
             </Card>
 
             {/* ---- 新建 ---- */}
-            <Card title="新建源文件" hint="会落盘，但不会自动加进构建">
+            <Card title="新建源文件" hint="目录从下拉里选，不用手打路径">
               <div className="row">
+                <div style={{ width: 300 }}>
+                  <Field label="放到哪个目录" hint="工程里已有的目录">
+                    <Select
+                      value={newDir}
+                      onChange={(e) => setNewDir(e.target.value)}
+                      options={scan.dirs.map((d) => ({
+                        value: d,
+                        label: d === '.' ? '（工程根目录）' : `${d}/`
+                      }))}
+                    />
+                  </Field>
+                </div>
                 <div className="grow">
-                  <Field label="相对工程根的路径" hint="例如 application/oled_task.c">
+                  <Field label="文件名" hint="带扩展名，例如 oled_task.c">
                     <TextInput
                       mono
-                      placeholder="application/new_task.c"
+                      placeholder="oled_task.c"
                       value={newName}
                       onChange={(e) => setNewName(e.target.value)}
                     />
@@ -339,6 +412,15 @@ export function SourcesPage(): React.JSX.Element {
                   </Button>
                 </div>
               </div>
+              {newName.trim() && (
+                <div className="faint small" style={{ marginTop: 6 }}>
+                  会创建{' '}
+                  <span className="mono">
+                    {newDir === '.' ? newName.trim() : `${newDir}/${newName.trim()}`}
+                  </span>
+                  ，建完自动出现在上面的「不在构建里」，勾一下就能加进构建。
+                </div>
+              )}
             </Card>
 
             {/* ---- 诊断 ---- */}
