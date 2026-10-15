@@ -22,7 +22,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { isAbsolute, join, posix, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, posix, resolve, sep } from 'node:path'
 
 // --------------------------------------------------------------------------
 // 类型
@@ -912,3 +912,228 @@ function indentOf(model: CmakeModel, offset: number): string {
 
 export { expand as expandCmakeVars, isResolved as isCmakeTokenResolved }
 export { isAbsolute }
+
+// --------------------------------------------------------------------------
+// 整个构建图（不只是根 CMakeLists.txt）
+// --------------------------------------------------------------------------
+
+export interface ProjectBuildModel {
+  /** 根 CMakeLists.txt 的模型 —— 写回锚点仍然用这个 */
+  main: CmakeModel
+  /** 参与构建的全部源文件（相对工程根，去重排序） */
+  sources: string[]
+  /** 参与构建的 include 目录（相对工程根，只留存在的） */
+  includeDirs: string[]
+  /** 解析过的文件（相对工程根），用来向用户解释「我看了哪些」 */
+  parsedFiles: string[]
+  /**
+   * 没看全的地方。**非空时上层必须提醒「清单可能不准」** ——
+   * 只在根 CMakeLists.txt 里找源文件会漏掉 include()/add_subdirectory() 里的，
+   * 于是一堆本来就在构建里的文件被报成「不在构建里」，用户点了「加入构建」
+   * 反而会重复编译、链接报 multiple definition。宁可不给结论，也不能给错的。
+   */
+  unresolved: string[]
+  /** 每个声明过源文件的 target（含 OBJECT 库），用来解释「这些文件是谁加的」 */
+  targets: Array<{ name: string; kind: TargetKind; file: string; sourceCount: number }>
+}
+
+/**
+ * 沿着 include() / add_subdirectory() 把**整个构建定义**读一遍。
+ *
+ * 为什么需要它：CMake 工程常见两类布局
+ *   · 分模块：根 CMakeLists.txt 里的 target_sources 是 CubeMX 生成的空占位，
+ *     真正的源文件清单在 include() 进来的 cmake/user.cmake 里
+ *   · 多目录：源文件挂在 add_subdirectory() 的子 CMakeLists.txt 上
+ * 只看根文件会得出「一个源文件都没有」这种**看起来确定、实际错误**的结论。
+ *
+ * 这里只做「读」，不负责写回 —— 写回要精确的行号锚点，仍然用 buildCmakeModel(根文件)。
+ */
+export function buildProjectBuildModel(root: string): ProjectBuildModel {
+  const mainFile = join(root, 'CMakeLists.txt')
+  const main = buildCmakeModel(mainFile, root)
+  const rootN = root.replace(/\\/g, '/').replace(/\/$/, '')
+
+  const sources = new Set<string>()
+  const includeDirs = new Set<string>()
+  const parsedFiles: string[] = []
+  const unresolved: string[] = []
+  const targets = new Map<string, { kind: TargetKind; file: string; count: number }>()
+
+  const rel = (abs: string): string => abs.replace(/\\/g, '/').slice(rootN.length).replace(/^\//, '')
+
+  /** 把一个 token 展开成路径：先替换内置变量（注意 include 进来的文件里 两者的含义不同），再展开 set 变量 */
+  const expandToken = (
+    tok: string,
+    vars: Record<string, string>,
+    sourceDir: string,
+    listDir: string
+  ): string => {
+    let t = tok.replace(/\\/g, '/')
+    // 内置变量和 set 变量必须**在同一轮循环里**反复替换：
+    // set(USER_APP_ROOT ${CMAKE_CURRENT_LIST_DIR}/..) 这种，存下来的值里带着
+    // 内置变量；只在一开始替换一次内置变量的话，从变量值里新冒出来的那些
+    // （例如 ${CMAKE_CURRENT_LIST_DIR}）就永远轮不到，最后判成「展开不了」。
+    for (let i = 0; i < 12; i++) {
+      const before = t
+      t = t.replace(/\$\{CMAKE_CURRENT_SOURCE_DIR\}/g, sourceDir.replace(/\\/g, '/'))
+      t = t.replace(/\$\{CMAKE_CURRENT_LIST_DIR\}/g, listDir.replace(/\\/g, '/'))
+      t = t.replace(/\$\{(CMAKE_SOURCE_DIR|PROJECT_SOURCE_DIR)\}/g, rootN)
+      t = t.replace(/\$\{CMAKE_CURRENT_BINARY_DIR\}/g, '')
+      t = t.replace(/\$\{([A-Za-z_]\w*)\}/g, (m, k: string) => (vars[k] !== undefined ? vars[k] : m))
+      if (t === before) break
+    }
+    return t
+  }
+
+  /**
+   * 读一个 CMake 文件。
+   * @param sourceDir ${CMAKE_CURRENT_SOURCE_DIR} 指向哪 ——
+   *        被 include() 进来时**仍然指向调用者的目录**（CMake 的语义），
+   *        add_subdirectory() 进来时才变成子目录
+   */
+  const visit = (file: string, sourceDir: string, depth: number): void => {
+    if (depth > 8) {
+      unresolved.push(`嵌套太深，没继续跟进：${rel(file)}`)
+      return
+    }
+    if (!existsSync(file)) return
+    const r = rel(file)
+    if (parsedFiles.includes(r)) return
+    parsedFiles.push(r)
+
+    let text: string
+    try {
+      text = readFileSync(file, 'utf8')
+    } catch {
+      unresolved.push(`读不了：${r}`)
+      return
+    }
+
+    const commands = scanCommands(text)
+    const vars = collectVariables(commands)
+    const listDir = dirname(file)
+
+    for (const cmd of commands) {
+      const vals = cmd.args.map((a) => a.text)
+
+      if (cmd.command === 'file' && vals.some((v) => /GLOB/i.test(v))) {
+        // GLOB 收进来的文件没法静态枚举 —— 老实说看不了，别猜
+        unresolved.push(`${r}: 用了 file(GLOB ...)，收进来的源文件列不出来`)
+        continue
+      }
+
+      if (cmd.command === 'include' || cmd.command === 'include_optional') {
+        for (const raw of vals) {
+          const t = expandToken(raw, vars, sourceDir, listDir)
+          if (t.includes('${') || t.startsWith('$<')) {
+            unresolved.push(`${r}: include(${raw}) 展开不了`)
+            continue
+          }
+          const abs = isAbsolute(t) ? t : resolve(listDir, t)
+          if (!existsSync(abs)) {
+            unresolved.push(`${r}: include(${raw}) 指向的文件不存在`)
+            continue
+          }
+          // include 不改变 CMAKE_CURRENT_SOURCE_DIR —— 传下去的 sourceDir 保持不变
+          visit(abs, sourceDir, depth + 1)
+        }
+        continue
+      }
+
+      if (cmd.command === 'add_subdirectory') {
+        const raw = vals.find((v) => v && !v.startsWith('$<'))
+        if (!raw) continue
+        const t = expandToken(raw, vars, sourceDir, listDir)
+        if (t.includes('${')) {
+          unresolved.push(`${r}: add_subdirectory(${raw}) 展开不了`)
+          continue
+        }
+        const subDir = isAbsolute(t) ? t : resolve(listDir, t)
+        const subFile = join(subDir, 'CMakeLists.txt')
+        if (!existsSync(subFile)) {
+          unresolved.push(`${r}: add_subdirectory(${raw}) 下没有 CMakeLists.txt`)
+          continue
+        }
+        visit(subFile, subDir, depth + 1)
+        continue
+      }
+
+      if (cmd.command === 'add_executable' || cmd.command === 'add_library') {
+        const name = vals[0] ? expandToken(vals[0], vars, sourceDir, listDir) : ''
+        if (!name) continue
+        const kind: TargetKind =
+          cmd.command === 'add_executable'
+            ? 'executable'
+            : /INTERFACE/i.test(vals.join(' '))
+              ? 'custom'
+              : 'library'
+        const prev = targets.get(name)
+        if (!prev) targets.set(name, { kind, file: r, count: 0 })
+        else if (kind === 'executable') prev.kind = 'executable'
+        continue
+      }
+
+      if (cmd.command === 'target_sources') {
+        const name = vals[0] ? expandToken(vals[0], vars, sourceDir, listDir) : ''
+        let added = 0
+        for (const raw of vals.slice(1)) {
+          if (/^(PRIVATE|PUBLIC|INTERFACE)$/i.test(raw)) continue
+          if (raw.startsWith('$<')) {
+            unresolved.push(`${r}: target_sources 里有生成器表达式 ${raw}`)
+            continue
+          }
+          const t = expandToken(raw, vars, sourceDir, listDir)
+          if (t.includes('${')) {
+            unresolved.push(`${r}: target_sources 里 ${raw} 展开不了`)
+            continue
+          }
+          // set(X a b c) 展开出来是 'a;b;c'，必须按 ; 拆
+          for (const piece of t.split(';')) {
+            const p = piece.trim()
+            if (!p || !looksLikeSource(p)) continue
+            const rp = toRelPathUnder(p, listDir, root)
+            if (rp) {
+              sources.add(rp)
+              added += 1
+            } else if (!p.includes('$')) {
+              // 工程外的源码（比如库），不算遗漏，但也不列进来
+            }
+          }
+        }
+        if (name) {
+          const prev = targets.get(name) ?? { kind: 'library' as TargetKind, file: r, count: 0 }
+          prev.count += added
+          targets.set(name, prev)
+        }
+        continue
+      }
+
+      if (cmd.command === 'target_include_directories') {
+        for (const raw of vals.slice(1)) {
+          if (/^(PRIVATE|PUBLIC|INTERFACE|SYSTEM)$/i.test(raw) || raw.startsWith('$<')) continue
+          const t = expandToken(raw, vars, sourceDir, listDir)
+          if (t.includes('${')) continue
+          const rp = toRelPathUnder(t, listDir, root)
+          if (rp && existsSync(join(root, rp.split('/').join(sep)))) includeDirs.add(rp)
+        }
+      }
+    }
+  }
+
+  if (existsSync(mainFile)) visit(mainFile, dirname(mainFile), 0)
+  else unresolved.push('工程根没有 CMakeLists.txt')
+
+  return {
+    main,
+    sources: [...sources].sort(),
+    includeDirs: [...includeDirs].sort(),
+    parsedFiles: parsedFiles.sort(),
+    unresolved,
+    targets: [...targets].map(([name, v]) => ({
+      name,
+      kind: v.kind,
+      file: v.file,
+      sourceCount: v.count
+    }))
+  }
+}

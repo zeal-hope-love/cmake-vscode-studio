@@ -631,6 +631,10 @@ export interface CmakeScanResult {
     compilableOnDisk: number
     headersOnDisk: number
     referencedProjectWide: number
+    /** 构建定义没看全的地方（file(GLOB)、展开不了的变量等）。非空时「不在构建里」可能不准 */
+    cmakeUnresolved: string[]
+    /** 解析过哪些 CMake 文件，用来向用户解释结论是怎么来的 */
+    cmakeParsedFiles: string[]
     cmakeListsCount: number
   }
   diagnostics: string[]

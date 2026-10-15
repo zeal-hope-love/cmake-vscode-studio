@@ -16,7 +16,12 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, posix, sep } from 'node:path'
-import { buildCmakeModel, collectReferencedPaths, type CmakeModel } from './cmakeModel'
+import {
+  buildCmakeModel,
+  buildProjectBuildModel,
+  collectReferencedPaths,
+  type CmakeModel
+} from './cmakeModel'
 import { planSourceEdit, type CmakeEditPlan } from './cmakeEdit'
 import { captureSnapshot } from './snapshotStore'
 import { recordWrite } from './historyStore'
@@ -73,6 +78,16 @@ export interface CmakeScanResult {
     compilableOnDisk: number
     headersOnDisk: number
     referencedProjectWide: number
+    /**
+     * 构建定义**没看全**的地方（file(GLOB)、展开不了的变量、跟不进的 include）。
+     *
+     * 非空时界面必须提醒「这份清单可能不准」并禁用「加入构建」：
+     * 只看根 CMakeLists.txt 会漏掉 include()/add_subdirectory() 里的源文件，
+     * 把本来就在构建里的报成遗漏，用户照着点会重复编译、链接报 multiple definition。
+     */
+    cmakeUnresolved: string[]
+    /** 解析过哪些 CMake 文件，用来向用户解释结论是怎么来的 */
+    cmakeParsedFiles: string[]
     cmakeListsCount: number
   }
   diagnostics: string[]
@@ -105,14 +120,21 @@ function walkCompilable(root: string, depth = 0, acc: string[] = []): string[] {
 export function scanSources(projectRoot: string): CmakeScanResult {
   const cmakeFile = join(projectRoot, 'CMakeLists.txt')
   const model = buildCmakeModel(cmakeFile, projectRoot)
+  // 「参与构建的源文件」要取**整个构建图**的并集，不能只看根 CMakeLists 里那个目标。
+  // 分模块布局（根里 target_sources 是 CubeMX 的空占位，真清单在 include() 进来的
+  // cmake/user.cmake）和多目录布局（挂在 add_subdirectory 的子文件上）都靠这个。
+  // 只看根文件会得出一份「看起来很确定、实际是错的」遗漏清单 ——
+  // 用户照着点「加入构建」会重复编译，链接报 multiple definition。
+  const full = buildProjectBuildModel(projectRoot)
   const ref = collectReferencedPaths(projectRoot)
 
   const rootTarget = model.targets.find((t) => t.kind === 'executable') ?? model.targets[0]
 
-  const inBuild = (rootTarget?.sources ?? [])
-    .filter((s) => s.relPath)
-    .map((s) => s.relPath!)
-    .sort((a, b) => a.localeCompare(b))
+  const inBuild = (
+    full.sources.length
+      ? full.sources
+      : (rootTarget?.sources ?? []).filter((s) => s.relPath).map((s) => s.relPath!)
+  ).sort((a, b) => a.localeCompare(b))
 
   const unresolved = (rootTarget?.sources ?? [])
     .filter((s) => !s.relPath)
@@ -122,7 +144,12 @@ export function scanSources(projectRoot: string): CmakeScanResult {
     .filter((s) => s.relPath && !s.exists)
     .map((s) => ({ relPath: s.relPath!, raw: s.raw, line: s.line }))
 
-  // 磁盘上的可编译文件，逐个和「全工程引用集合」比
+  // 磁盘上的可编译文件，逐个和「全工程引用集合」比。
+  // 这里必须用**整个构建图**的集合（full.sources），不能用只看根 CMakeLists 的
+  // ref.sources —— 否则分模块布局下，写在 include() 进来的 cmake/user.cmake 里的
+  // 源文件会被全部误报成「不在构建里」。
+  const buildSet = new Set<string>(full.sources.map((s) => s.toLowerCase()))
+  for (const s of ref.sources) buildSet.add(s.toLowerCase())
   const abs = walkCompilable(projectRoot)
   const orphans: string[] = []
   let headersOnDisk = 0
@@ -133,7 +160,7 @@ export function scanSources(projectRoot: string): CmakeScanResult {
       .split(sep)
       .join(posix.sep)
     if (HEADER.test(rel)) headersOnDisk += 1
-    if (!ref.sources.has(rel.toLowerCase())) orphans.push(rel)
+    if (!buildSet.has(rel.toLowerCase())) orphans.push(rel)
   }
 
   // 头文件单独数一遍（walkCompilable 只收可编译的，所以走一次全量）
@@ -177,7 +204,10 @@ export function scanSources(projectRoot: string): CmakeScanResult {
     stats: {
       compilableOnDisk: abs.length,
       headersOnDisk: allHeaders,
-      referencedProjectWide: ref.sources.size,
+      referencedProjectWide: full.sources.length || ref.sources.size,
+      /** 构建定义没看全的地方；非空时界面必须提醒「清单可能不准」 */
+      cmakeUnresolved: full.unresolved,
+      cmakeParsedFiles: full.parsedFiles,
       cmakeListsCount: ref.dirs.length
     },
     diagnostics: model.diagnostics,
