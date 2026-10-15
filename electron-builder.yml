@@ -26,6 +26,10 @@ files:
 extraResources:
   - from: resources/icon.png
     to: icon.png
+  # 模块包（vofa 等）：运行时读，所以在 asar 外面。
+  # 主进程按 app.isPackaged 决定从 process.resourcesPath/packs 还是 <repo>/packs 读。
+  - from: packs
+    to: packs
 
 win:
   target:

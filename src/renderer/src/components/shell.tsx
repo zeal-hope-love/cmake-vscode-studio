@@ -21,13 +21,13 @@ import { ResizeHandle, useStoredWidth } from './Resizable'
  */
 const NAV: Array<{ page: PageKey; label: string; icon: () => React.JSX.Element; group: string }> = [
   { page: 'project', label: '工程总览', icon: Icons.project, group: '工程' },
-  { page: 'sources', label: '构建目标与源文件', icon: Icons.tasks, group: '工程' },
   { page: 'launch', label: '调试 launch.json', icon: Icons.debug, group: '工程' },
   { page: 'tasks', label: '任务 tasks.json', icon: Icons.tasks, group: '工程' },
   { page: 'settings', label: '设置 settings.json', icon: Icons.settings, group: '工程' },
   { page: 'cpp', label: 'IntelliSense', icon: Icons.cpp, group: '工程' },
   { page: 'build', label: '构建与烧录', icon: Icons.build, group: '工程' },
   { page: 'inspect', label: '检查与清理', icon: Icons.broom, group: '工程' },
+  { page: 'sources', label: '构建目标与源文件', icon: Icons.tasks, group: '源码' },
   { page: 'templates', label: '模板与配置', icon: Icons.templates, group: '模板' },
   { page: 'tools', label: '工具与路径', icon: Icons.tools, group: '环境' },
   { page: 'history', label: '历史记录', icon: Icons.clock, group: '记录' }

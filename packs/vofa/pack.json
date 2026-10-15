@@ -1,0 +1,86 @@
+{
+  "id": "vofa",
+  "name": "VOFA+ 在线调参",
+  "summary": "把注册的变量周期发到 VOFA+ 画波形，并支持 set/get/list 在线改参数。不用回 CubeMX、不用重烧。",
+  "version": "1.0.0",
+  "icon": "waveform",
+
+  "params": [
+    {
+      "key": "uart",
+      "label": "用哪个串口",
+      "type": "enum",
+      "default": "huart1",
+      "hint": "要挑一个没被占用的。DBUS 遥控通常在 huart3、裁判系统在 huart6。"
+    },
+    {
+      "key": "sendHz",
+      "label": "波形发送频率 (Hz)",
+      "type": "number",
+      "default": 50,
+      "hint": "通道数 N 时约 (N*4+4)*Hz 字节/秒。走蓝牙透传（几 KB/s）别设太高。"
+    },
+    {
+      "key": "rxMode",
+      "label": "命令接收方式",
+      "type": "enum",
+      "default": "it",
+      "options": ["it", "dma"],
+      "hint": "it = 逐字节中断，只要串口中断使能即可；dma = DMA Circular，需要 CubeMX 里配 RX DMA。"
+    },
+    {
+      "key": "builtinIrq",
+      "label": "由模块自己使能串口中断",
+      "type": "bool",
+      "default": true,
+      "hint": "CubeMX 里没勾这个串口的全局中断时打开。它会在运行时开 NVIC 并自带中断入口。"
+    }
+  ],
+
+  "files": [
+    { "from": "vofa_task.c", "to": "application/vofa/vofa_task.c" },
+    { "from": "vofa_task.h", "to": "application/vofa/vofa_task.h" },
+    { "from": "vofa_types.h", "to": "application/vofa/vofa_types.h" }
+  ],
+
+  "generated": [
+    { "template": "vofa_config.h.tpl", "to": "application/vofa/vofa_config.h" },
+    { "template": "vofa_bind.c.tpl", "to": "application/vofa/vofa_bind.c" }
+  ],
+
+  "requires": {
+    "headers": ["cmsis_os.h", "main.h"],
+    "optionalHeaders": ["struct_typedef.h", "usart.h", "bsp_usart.h", "pid.h"],
+    "symbols": ["usart1_tx_dma_enable"]
+  },
+
+  "patches": [
+    {
+      "file": "CMakeLists.txt",
+      "action": "add-sources",
+      "sources": ["application/vofa/vofa_task.c", "application/vofa/vofa_bind.c"],
+      "note": "复用「构建目标与源文件」那套编辑引擎（就地插入 + diff + 快照）"
+    },
+    {
+      "file": "Src/freertos.c",
+      "action": "insert-task",
+      "anchor": "/* USER CODE END Header */",
+      "note": "在任务创建区插入 osThreadDef + osThreadCreate"
+    },
+    {
+      "file": "application/remote_control.c",
+      "action": "define",
+      "name": "SBUS_FORWARD_TO_USART1",
+      "value": "0",
+      "optional": true,
+      "note": "关掉 SBUS 往 USART1 的转发，释放 TX。找不到相关代码就跳过（说明这个工程没用这路）"
+    }
+  ],
+
+  "manualSteps": [
+    "VOFA+ 里打开对应 COM 口，协议选 **JustFloat**，波特率与工程一致",
+    "如果走蓝牙透传：两个模块先 AT+BAUD7 改成 115200、AT+BLUFISEND=1 开透传，再 AT+BIND 绑定（出厂默认 9600）",
+    "命令：`list` 列出所有可调参数；`get 名字` 读一个；`set 名字 值` 改一个（立即生效，断电不保存）",
+    "调好之后把值写回源码里的宏固化 —— 在线改的值不落盘"
+  ]
+}
