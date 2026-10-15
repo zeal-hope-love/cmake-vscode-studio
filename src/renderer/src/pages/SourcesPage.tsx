@@ -374,7 +374,7 @@ export function SourcesPage(): React.JSX.Element {
 
             {/* ---- 新建 ---- */}
             <Card title="新建源文件" hint="目录从下拉里选，不用手打路径">
-              <div className="row">
+              <div className="row" style={{ alignItems: 'flex-start' }}>
                 <div style={{ width: 300 }}>
                   <Field label="放到哪个目录" hint="工程里已有的目录">
                     <Select
@@ -398,7 +398,7 @@ export function SourcesPage(): React.JSX.Element {
                   </Field>
                 </div>
                 <div style={{ width: 220 }}>
-                  <Field label="类型">
+                  <Field label="类型" hint="决定骨架里生成什么">
                     <Select
                       value={newKind}
                       onChange={(e) => setNewKind(e.target.value as NewFileKind)}
@@ -406,11 +406,11 @@ export function SourcesPage(): React.JSX.Element {
                     />
                   </Field>
                 </div>
-                <div style={{ paddingTop: 18 }}>
+                <Field label={'\u00a0'}>
                   <Button variant="primary" onClick={() => void createFile()}>
                     新建
                   </Button>
-                </div>
+                </Field>
               </div>
               {newName.trim() && (
                 <div className="faint small" style={{ marginTop: 6 }}>
