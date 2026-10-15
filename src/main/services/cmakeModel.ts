@@ -958,6 +958,12 @@ export function buildProjectBuildModel(root: string): ProjectBuildModel {
   const parsedFiles: string[] = []
   const unresolved: string[] = []
   const targets = new Map<string, { kind: TargetKind; file: string; count: number }>()
+  /**
+   * 整个构建图共享的变量表。CMake 的 set() 在 include()/add_subdirectory() 之后
+   * 依然可见，所以不能每个文件各算一份 —— 否则根文件里 set 的 CMAKE_PROJECT_NAME
+   * 到子文件就丢了。
+   */
+  const globalVars: Record<string, string> = {}
 
   const rel = (abs: string): string => abs.replace(/\\/g, '/').slice(rootN.length).replace(/^\//, '')
 
@@ -1010,11 +1016,26 @@ export function buildProjectBuildModel(root: string): ProjectBuildModel {
     }
 
     const commands = scanCommands(text)
-    const vars = collectVariables(commands)
+    // 变量是**跨文件全局可见**的，不能按文件隔离：
+    // 根文件 set(CMAKE_PROJECT_NAME standard_robot)，而 cmake/stm32cubemx/CMakeLists.txt
+    // 里用 ${CMAKE_PROJECT_NAME} 加源文件 —— 隔离的话那边永远展不开，
+    // 界面上就会显示成一个字面量 "${CMAKE_PROJECT_NAME}" 的目标。
+    // 遍历顺序保证根文件先读，所以直接往后合并即可。
+    Object.assign(globalVars, collectVariables(commands))
+    const vars = globalVars
     const listDir = dirname(file)
 
     for (const cmd of commands) {
       const vals = cmd.args.map((a) => a.text)
+
+      // project(<name>) 是 CMake 内置，会顺手定下 CMAKE_PROJECT_NAME / PROJECT_NAME
+      if (cmd.command === 'project' && vals[0]) {
+        const n = expandToken(vals[0], vars, sourceDir, listDir)
+        if (n && !n.includes('${')) {
+          vars['CMAKE_PROJECT_NAME'] = n
+          vars['PROJECT_NAME'] = n
+        }
+      }
 
       if (cmd.command === 'file' && vals.some((v) => /GLOB/i.test(v))) {
         // GLOB 收进来的文件没法静态枚举 —— 老实说看不了，别猜

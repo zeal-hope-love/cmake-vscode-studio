@@ -67,7 +67,26 @@ export interface CmakeScanResult {
   cmakeFile: string
   /** 根 CMakeLists 的工程名 */
   projectName: string | null
+  /** **根 CMakeLists 里**声明的目标 —— 只有这些能被本页改写 */
   targets: SourceTargetRow[]
+  /**
+   * 整个构建图里的全部 target（含子 CMakeLists / 被 include 的 .cmake 里声明的）。
+   * 界面用来说明「为什么有 N 个 CMakeLists」：它们不是 N 个工程，是一个构建图。
+   */
+  allTargets: Array<{
+    name: string
+    kind: string
+    file: string
+    sourceCount: number
+    isExecutable: boolean
+  }>
+  /** 构建入口（永远是根 CMakeLists.txt） */
+  buildEntry: string
+  /**
+   * 疑似「别的构建系统留下的残留」——例如 Keil 时代的 MDK-ARM/ 目录。
+   * 这些不是 CMake 的源文件，但也确实不在构建里；要跟「漏加」区分开。
+   */
+  leftovers: Array<{ relPath: string; reason: string; system: string }>
   /** **根目标**在构建里的源文件（相对路径，posix 排序后） */
   inBuild: string[]
   /** 磁盘上可编译、但整个工程都没引用到的 —— 这才是「要加进构建」的候选 */
@@ -183,6 +202,60 @@ export function scanSources(projectRoot: string): CmakeScanResult {
 
   orphans.sort((a, b) => a.localeCompare(b))
 
+  /**
+   * 把「别的构建系统留下的残留」从「漏加的源文件」里分出来。
+   *
+   * 二者的处理方式完全相反：漏加的要补进 CMakeLists，残留的应该删掉或无视。
+   * 混在一起显示，用户很容易把 Keil 时代的 MDK-ARM/delay.c 当成漏加的文件加进构建，
+   * 那会引入一份和现在完全无关的旧代码。
+   */
+  const keilDirs = new Set<string>()
+  const scanForBuildSystemFiles = (dir: string, d = 0): void => {
+    if (d > 8) return
+    let es: import('node:fs').Dirent[]
+    try {
+      es = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of es) {
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name)) scanForBuildSystemFiles(join(dir, e.name), d + 1)
+      } else if (/\.(uvprojx|uvoptx|ewp|eww)$/i.test(e.name)) {
+        // 这个目录属于某个 Keil / IAR 工程
+        keilDirs.add(
+          dir
+            .slice(projectRoot.length)
+            .replace(/^[\\/]/, '')
+            .split(sep)
+            .join(posix.sep)
+        )
+      }
+    }
+  }
+  scanForBuildSystemFiles(projectRoot)
+
+  const LEGACY_DIR = /(^|\/)(MDK-ARM|EWARM|Objects|Listings|DebugConfig|RTE)(\/|$)/i
+  const leftovers: Array<{ relPath: string; reason: string; system: string }> = []
+  for (const o of orphans) {
+    const dir = o.includes('/') ? o.slice(0, o.lastIndexOf('/')) : ''
+    const inKeilTree = [...keilDirs].some((k) => k && (dir === k || dir.startsWith(`${k}/`)))
+    if (LEGACY_DIR.test(o)) {
+      leftovers.push({
+        relPath: o,
+        system: 'Keil MDK',
+        reason: `在 ${o.split('/')[0]}/ 目录下 —— 这是 Keil 工程目录的常见名字，CMake 构建用不到`
+      })
+    } else if (inKeilTree) {
+      leftovers.push({
+        relPath: o,
+        system: 'Keil MDK / IAR',
+        reason: '所在目录里有 .uvprojx / .ewp 之类的旧工程文件，属于另一个构建系统'
+      })
+    }
+  }
+  const leftoverSet = new Set(leftovers.map((l) => l.relPath))
+
   return {
     root: projectRoot,
     cmakeFile,
@@ -199,7 +272,18 @@ export function scanSources(projectRoot: string): CmakeScanResult {
       usesGlob: t.globPatterns.length > 0
     })),
     inBuild,
-    orphans,
+    // 「不在构建里」里把残留剔出去 —— 但**不隐藏**，单独一栏显示，
+    // 因为二者的处理方式相反（补进去 vs 删掉），混着显示会让人加进无关的旧代码。
+    orphans: orphans.filter((o) => !leftoverSet.has(o)),
+    allTargets: full.targets.map((t) => ({
+      name: t.name,
+      kind: t.kind,
+      file: t.file,
+      sourceCount: t.sourceCount,
+      isExecutable: t.kind === 'executable'
+    })),
+    buildEntry: 'CMakeLists.txt',
+    leftovers,
     missing,
     stats: {
       compilableOnDisk: abs.length,

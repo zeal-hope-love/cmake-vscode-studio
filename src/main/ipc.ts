@@ -373,6 +373,58 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       createSourceFile(projectRoot, relPath, kind)
   )
 
+  /**
+   * 把文件移到回收站（不是直接删）。
+   *
+   * 为什么用回收站而不是 rm：这一栏是「Keil 时代的残留，要不要清理」，
+   * 属于**建议性**操作，删错了用户可能就找不回来了。走回收站的话，
+   * 判断失误的代价只是去回收站捞一下。同样先存快照。
+   */
+  ipcMain.handle(IPC.cmakeTrashFiles, async (_e, projectRoot: string, relPaths: string[]) => {
+    const result: { ok: boolean; trashed: string[]; errors: string[] } = {
+      ok: false,
+      trashed: [],
+      errors: []
+    }
+    const targets: Array<{ rel: string; abs: string }> = []
+    for (const rel of relPaths) {
+      const abs = resolveInsideProject(projectRoot, rel)
+      if (!abs) {
+        result.errors.push(`${rel}：路径越界，已跳过`)
+        continue
+      }
+      targets.push({ rel, abs })
+    }
+    if (!targets.length) return result
+
+    try {
+      captureSnapshot(
+        projectRoot,
+        targets.map((t) => ({ relativePath: t.rel, previous: readFileSync(t.abs, 'utf8') }))
+      )
+    } catch (err) {
+      result.errors.push(`存快照失败，已中止：${(err as Error).message}`)
+      return result
+    }
+
+    for (const t of targets) {
+      try {
+        await shell.trashItem(t.abs)
+        result.trashed.push(t.rel)
+      } catch (err) {
+        result.errors.push(`${t.rel}：${(err as Error).message}`)
+      }
+    }
+    recordWrite(
+      projectRoot,
+      [`清理 ${result.trashed.length} 个残留文件（已移到回收站）`],
+      result.errors,
+      null
+    )
+    result.ok = result.errors.length === 0
+    return result
+  })
+
   // ---- 模块包（vofa 等）--------------------------------------------------
   //
   // 和 CMake 那组一样，读写分开：

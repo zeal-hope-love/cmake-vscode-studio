@@ -627,6 +627,18 @@ export interface CmakeScanResult {
   orphans: string[]
   /** 写了但磁盘上没有的 */
   missing: Array<{ relPath: string; raw: string; line: number }>
+  /** 整个构建图里的全部 target（说明「为什么有 N 个 CMakeLists」用） */
+  allTargets: Array<{
+    name: string
+    kind: string
+    file: string
+    sourceCount: number
+    isExecutable: boolean
+  }>
+  /** 构建入口（永远是根 CMakeLists.txt） */
+  buildEntry: string
+  /** 疑似别的构建系统（Keil/IAR）留下的残留 —— 和「漏加」分开处理 */
+  leftovers: Array<{ relPath: string; reason: string; system: string }>
   stats: {
     compilableOnDisk: number
     headersOnDisk: number
@@ -723,6 +735,7 @@ export const IPC = {
   cmakeApply: 'cmake:apply',
   cmakeCreateFile: 'cmake:create-file',
   cmakeSignature: 'cmake:signature',
+  cmakeTrashFiles: 'cmake:trashFiles',
 
   packList: 'pack:list',
   packInspect: 'pack:inspect',
@@ -797,6 +810,14 @@ export interface StudioApi {
   cmakeApply(req: CmakeChangeRequest): Promise<CmakeApplyResult>
   /** 算一个「工程变了没」的指纹，界面据此决定要不要重新扫描 */
   cmakeSignature(projectRoot: string): Promise<CmakeSignature>
+  /**
+   * 把文件**移到回收站**（不是直接删）—— 可还原。
+   * 用于清理 Keil/IAR 时代的残留：删错了还能从回收站捞回来。
+   */
+  cmakeTrashFiles(
+    projectRoot: string,
+    relPaths: string[]
+  ): Promise<{ ok: boolean; trashed: string[]; errors: string[] }>
   /** 已安装的模块包列表 */
   packList(): Promise<import('./packTypes').PackManifest[]>
   /** 读工程事实 + 兼容性检查 + PID 候选，只读不写 */

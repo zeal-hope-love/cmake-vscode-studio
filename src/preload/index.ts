@@ -109,6 +109,13 @@ const api: StudioApi = {
   packApply: (options: PackPlanOptions) =>
     ipcRenderer.invoke(IPC.packApply, options) as Promise<PackApplyResult>,
 
+  cmakeTrashFiles: (projectRoot, relPaths) =>
+    ipcRenderer.invoke(IPC.cmakeTrashFiles, projectRoot, relPaths) as Promise<{
+      ok: boolean
+      trashed: string[]
+      errors: string[]
+    }>,
+
   cmakeSignature: (projectRoot) =>
     ipcRenderer.invoke(IPC.cmakeSignature, projectRoot) as Promise<CmakeSignature>,
 

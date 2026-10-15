@@ -49,6 +49,8 @@ export function SourcesPage(): React.JSX.Element {
 
   const [scan, setScan] = React.useState<CmakeScanResult | null>(null)
   const [busy, setBusy] = React.useState(false)
+  /** 清理 Keil/IAR 残留的确认弹窗（操作是「移到回收站」，可还） */
+  const [trashOpen, setTrashOpen] = React.useState(false)
   const [target, setTarget] = React.useState('')
   const [checked, setChecked] = React.useState<Set<string>>(new Set())
   const [preview, setPreview] = React.useState<CmakeChangePreview | null>(null)
@@ -274,11 +276,82 @@ export function SourcesPage(): React.JSX.Element {
 
             {scan.stats.cmakeListsCount > 1 && (
               <Alert kind="info">
-                这个工程有 <b>{scan.stats.cmakeListsCount}</b> 个 CMakeLists.txt。判断「有没有进构建」时
-                <b>把所有 CMakeLists 都算进来了</b> —— 所以 HAL、FreeRTOS 那些放在
-                <span className="mono"> cmake/stm32cubemx/</span> 里的文件不会被误报成遗漏。
-                可编译文件共 {scan.stats.compilableOnDisk} 个，其中 {scan.stats.headersOnDisk} 个头文件
-                本来就不需要写进 CMakeLists。
+                <div className="bold mb-8">
+                  这个工程有 {scan.stats.cmakeListsCount} 个 CMakeLists.txt，但它是<b>一个</b>
+                  构建，不是多个
+                </div>
+                CMake 的规矩是<b>每个目录一个 CMakeLists.txt</b>，由根文件用{' '}
+                <span className="mono">add_subdirectory()</span> /{' '}
+                <span className="mono">include()</span> 串起来 —— 它们合起来描述同一个构建。
+                <div className="mt-8">
+                  <b>构建入口永远是根部这个</b>
+                  <span className="mono"> {scan.buildEntry}</span>（
+                  <span className="mono">cmake -S 工程根</span> 就是从它开始读），
+                  <b>不能选</b> —— 换入口就等于换工程。
+                </div>
+                <div className="mt-8">
+                  能选的是<b>构建哪个目标</b>（
+                  <span className="mono">cmake --build build --target 名字</span>）。 这个工程一共{' '}
+                  {scan.allTargets.length} 个目标：
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  {scan.allTargets.map((t) => (
+                    <div key={`${t.file}:${t.name}`} className="small">
+                      <span className="mono">{t.name}</span>
+                      <span className="faint">
+                        {' '}
+                        · {t.isExecutable ? '可执行文件' : t.kind === 'custom' ? '接口库' : '库'} ·{' '}
+                        {t.sourceCount} 个源文件 · 声明于{' '}
+                      </span>
+                      <span className="mono faint">{t.file}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="faint small" style={{ marginTop: 6 }}>
+                  本页只能改<b>根文件里</b>那个目标（下面下拉框里的），其它目标在子文件 / 生成文件里，
+                  改它们会被 CubeMX 重新生成覆盖。
+                  <br />
+                  可编译文件共 {scan.stats.compilableOnDisk} 个，其中 {scan.stats.headersOnDisk}{' '}
+                  个头文件 本来就不需要写进 CMakeLists。
+                </div>
+              </Alert>
+            )}
+
+            {/*
+              残留和「漏加」必须分开显示：处理方式相反（删掉 vs 补进构建）。
+              混在一起，用户很容易把 Keil 时代的 MDK-ARM/delay.c 当成漏加的文件加进构建。
+            */}
+            {scan.leftovers.length > 0 && (
+              <Alert kind="warn">
+                <div className="bold mb-8">
+                  发现 {scan.leftovers.length} 个疑似「别的构建系统留下的残留」
+                </div>
+                <div className="small">
+                  它们确实不在 CMake 构建里，但<b>不是漏加</b> —— 是 Keil/IAR 时代的东西，
+                  加进构建只会引入一份和现在无关的旧代码，正常做法是删掉。
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  {scan.leftovers.map((l) => (
+                    <div key={l.relPath} className="small">
+                      <span className="mono">{l.relPath}</span>
+                      <span className="faint">
+                        {' '}
+                        · {l.system} · {l.reason}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <Button size="sm" onClick={() => setTrashOpen(true)}>
+                    清理这些残留（{scan.leftovers.length} 个）
+                  </Button>
+                  <span className="faint small" style={{ alignSelf: 'center' }}>
+                    会移到<b>回收站</b>，不是直接删 —— 判断错了还能捞回来
+                  </span>
+                </div>
+                <div className="faint small" style={{ marginTop: 6 }}>
+                  这些文件已从上面的「不在构建里」里剔出去，免得和真正漏加的文件混在一起。
+                </div>
               </Alert>
             )}
 
@@ -488,6 +561,58 @@ export function SourcesPage(): React.JSX.Element {
           </>
         )}
       </PageBody>
+
+      {/* ---- 清理残留（移到回收站，可还） ---- */}
+      {trashOpen && scan && (
+        <Modal
+          title="把这些残留移到回收站？"
+          width={720}
+          onClose={() => setTrashOpen(false)}
+          footer={
+            <>
+              <Button onClick={() => setTrashOpen(false)}>取消</Button>
+              <Button
+                variant="primary"
+                disabled={busy}
+                onClick={() => {
+                  void (async () => {
+                    setBusy(true)
+                    try {
+                      const r = await window.api.cmakeTrashFiles(
+                        projectRoot,
+                        scan.leftovers.map((l) => l.relPath)
+                      )
+                      if (!r.ok) {
+                        notify('err', r.errors.join('；') || '清理失败')
+                        return
+                      }
+                      notify('ok', `已把 ${r.trashed.length} 个文件移到回收站`)
+                      setTrashOpen(false)
+                      await refreshHistory()
+                      await reload()
+                    } finally {
+                      setBusy(false)
+                    }
+                  })()
+                }}
+              >
+                {busy ? '处理中…' : '移到回收站'}
+              </Button>
+            </>
+          }
+        >
+          <Alert kind="info">
+            走的是<b>回收站</b>，不是永久删除 —— 到 Windows 回收站里可以还原。操作前照样会存快照。
+          </Alert>
+          <div className="small" style={{ marginTop: 8 }}>
+            {scan.leftovers.map((l) => (
+              <div key={l.relPath} className="mono">
+                · {l.relPath}
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
 
       {/* ---- 差异预览 ---- */}
       {preview && (
