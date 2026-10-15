@@ -23,6 +23,8 @@ import {
   type NewFileKind,
   type GenOptions,
   type HistoryEntry,
+  type PackInspectResult,
+  type PackPlanOptions,
   type PlanRequest,
   type PlannedFile,
   type ProjectCandidate,
@@ -39,6 +41,7 @@ import {
   type WriteRequest,
   type WriteResult
 } from '@shared/types'
+import type { PackApplyResult, PackManifest, PackPlan } from '@shared/packTypes'
 
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_event: unknown, payload: T): void => cb(payload)
@@ -96,6 +99,15 @@ const api: StudioApi = {
   // ---- CMake 构建目标与源文件 ----
   cmakeScan: (projectRoot) =>
     ipcRenderer.invoke(IPC.cmakeScan, projectRoot) as Promise<CmakeScanResult>,
+
+  // ---- 模块包 ----
+  packList: () => ipcRenderer.invoke(IPC.packList) as Promise<PackManifest[]>,
+  packInspect: (packId, projectRoot) =>
+    ipcRenderer.invoke(IPC.packInspect, packId, projectRoot) as Promise<PackInspectResult>,
+  packPlan: (options: PackPlanOptions) =>
+    ipcRenderer.invoke(IPC.packPlan, options) as Promise<PackPlan>,
+  packApply: (options: PackPlanOptions) =>
+    ipcRenderer.invoke(IPC.packApply, options) as Promise<PackApplyResult>,
 
   cmakeSignature: (projectRoot) =>
     ipcRenderer.invoke(IPC.cmakeSignature, projectRoot) as Promise<CmakeSignature>,

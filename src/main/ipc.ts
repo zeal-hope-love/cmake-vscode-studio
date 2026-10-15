@@ -7,6 +7,14 @@
 
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { spawn } from 'node:child_process'
+import { applyPackInstall, planPackInstall } from './services/packInstaller'
+import {
+  checkPackCompat,
+  inspectProject,
+  listPacks,
+  loadPack,
+  scanPidStructs
+} from './services/packStore'
 import {
   applySourceChange,
   createSourceFile,
@@ -40,6 +48,8 @@ import {
   type WriteRequest,
   type WriteResult
 } from '@shared/types'
+import type { PackApplyResult, PackManifest, PackPlan } from '@shared/packTypes'
+import type { PackInspectResult, PackPlanOptions } from '@shared/types'
 import { defaultGenOptions, generateBundle } from './services/generators'
 import { adaptTemplateOptions } from '@shared/templateAdapt'
 import { scanProject } from './services/scanner'
@@ -362,6 +372,45 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     async (_e, projectRoot: string, relPath: string, kind: NewFileKind) =>
       createSourceFile(projectRoot, relPath, kind)
   )
+
+  // ---- 模块包（vofa 等）--------------------------------------------------
+  //
+  // 和 CMake 那组一样，读写分开：
+  //   packList/packInspect/packPlan 只读 —— 看清楚要改什么再决定
+  //   packApply 才落盘，写之前存快照，历史页能一键还原
+  ipcMain.handle(IPC.packList, async () => listPacks())
+
+  ipcMain.handle(
+    IPC.packInspect,
+    async (_e, packId: string, projectRoot: string): Promise<PackInspectResult> => {
+      const pack = loadPack(packId)
+      if (!pack) throw new Error(`找不到模块包 ${packId}`)
+      const facts = inspectProject(projectRoot)
+      return {
+        report: checkPackCompat(pack, projectRoot, facts),
+        pidCandidates: scanPidStructs(projectRoot),
+        existingFiles: facts.existingVofa
+      }
+    }
+  )
+
+  ipcMain.handle(IPC.packPlan, async (_e, options: PackPlanOptions): Promise<PackPlan> =>
+    planPackInstall(options)
+  )
+
+  ipcMain.handle(IPC.packApply, async (_e, options: PackPlanOptions): Promise<PackApplyResult> => {
+    const plan = planPackInstall(options)
+    if (plan.blocked) {
+      return {
+        ok: false,
+        written: [],
+        skipped: plan.changes.filter((c) => c.action === 'skip').map((c) => c.path),
+        errors: ['有必须先处理的问题，未写入任何文件'],
+        snapshotId: null
+      }
+    }
+    return applyPackInstall(plan)
+  })
 
   // ---- 模板 -------------------------------------------------------------
   ipcMain.handle(IPC.templateList, async () => listTemplates())

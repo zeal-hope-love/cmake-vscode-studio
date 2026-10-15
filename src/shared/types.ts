@@ -720,6 +720,11 @@ export const IPC = {
   cmakeCreateFile: 'cmake:create-file',
   cmakeSignature: 'cmake:signature',
 
+  packList: 'pack:list',
+  packInspect: 'pack:inspect',
+  packPlan: 'pack:plan',
+  packApply: 'pack:apply',
+
   templateList: 'template:list',
   templateSave: 'template:save',
   templateDelete: 'template:delete',
@@ -788,6 +793,15 @@ export interface StudioApi {
   cmakeApply(req: CmakeChangeRequest): Promise<CmakeApplyResult>
   /** 算一个「工程变了没」的指纹，界面据此决定要不要重新扫描 */
   cmakeSignature(projectRoot: string): Promise<CmakeSignature>
+  /** 已安装的模块包列表 */
+  packList(): Promise<import('./packTypes').PackManifest[]>
+  /** 读工程事实 + 兼容性检查 + PID 候选，只读不写 */
+  packInspect(packId: string, projectRoot: string): Promise<PackInspectResult>
+  /** 算出改动清单（含每个文件的改前改后全文），只读不写 */
+  packPlan(options: PackPlanOptions): Promise<import('./packTypes').PackPlan>
+  /** 落盘（先存快照）+ 记历史 */
+  packApply(options: PackPlanOptions): Promise<import('./packTypes').PackApplyResult>
+
   /** 新建一个源码文件（骨架），不自动加入构建 */
   cmakeCreateFile(
     projectRoot: string,
@@ -818,4 +832,42 @@ declare global {
   interface Window {
     api: StudioApi
   }
+}
+
+// --------------------------------------------------------------------------
+// 模块包（Pack）—— 类型定义在 packTypes.ts，这里转出去方便渲染进程用
+// --------------------------------------------------------------------------
+
+export type {
+  ChannelBinding,
+  PackApplyResult,
+  PackBindings,
+  PackChangeAction,
+  PackCheck,
+  PackCheckLevel,
+  PackCompatReport,
+  PackFileChange,
+  PackManifest,
+  PackParam,
+  PackPatchSpec,
+  PackPlan,
+  PidBinding,
+  PidCandidate
+} from './packTypes'
+
+/** packInspect 的返回：兼容性报告 + 可一键注册的 PID 候选 + 工程里已有的 vofa 文件 */
+export interface PackInspectResult {
+  report: import('./packTypes').PackCompatReport
+  pidCandidates: import('./packTypes').PidCandidate[]
+  existingFiles: string[]
+}
+
+/** packPlan / packApply 的入参 */
+export interface PackPlanOptions {
+  packId: string
+  root: string
+  params: Record<string, string | number | boolean>
+  bindings: import('./packTypes').PackBindings
+  /** 工程里有旧版平铺的 vofa 文件时，是否顺手删掉（否则会重复定义符号） */
+  removeLegacy?: boolean
 }

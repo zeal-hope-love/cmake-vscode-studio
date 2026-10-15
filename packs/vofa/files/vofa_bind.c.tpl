@@ -15,7 +15,13 @@
   */
 #include "vofa_task.h"
 #include "vofa_config.h"
+
+#include <stdio.h>
+#include <string.h>
 ${EXTRA_INCLUDES}
+
+/* 「前缀_后缀」拼出来的参数名长度上限，和 vofa_task.c 里的 VOFA_NAME_LEN 对齐 */
+#define VOFA_NAME_LEN_LOCAL 24
 
 /* --------------------------------------------------------------------------
  * PID 注册辅助
