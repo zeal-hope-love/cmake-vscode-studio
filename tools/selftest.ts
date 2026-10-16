@@ -24,7 +24,7 @@ import {
   collectReferencedPaths
 } from '../src/main/services/cmakeModel'
 import { planSourceEdit } from '../src/main/services/cmakeEdit'
-import { scanSources, renderNewFile } from '../src/main/services/sourceScanner'
+import { findOrphanNotes, scanSources, renderNewFile } from '../src/main/services/sourceScanner'
 import { detectTools, findSvdFile } from '../src/main/services/toolDetector'
 import { planFiles, writeFiles } from '../src/main/services/writer'
 import {
@@ -1492,6 +1492,12 @@ bgPut(
 target_sources(demo PRIVATE \${SUB_Src})
 `
 )
+bgPut('app/orphan_x.c', 'int x;\n')
+// 跨两行的注释：模拟真实工程里「第一行点名文件、第二行才写原因」的写法
+bgPut(
+  'note.cmake',
+  '# orphan_x.c exists on disk but is NOT part of the build -\n# intentionally excluded.\n'
+)
 bgPut('app/a.c', 'int a;\n')
 bgPut('app/b.c', 'int b;\n')
 bgPut('sub/c.c', 'int c;\n')
@@ -1520,6 +1526,20 @@ check(
   '构建图: file(GLOB) 会记进「没看全」，界面据此禁用加入',
   bg.unresolved.some((u) => /GLOB/.test(u)),
   bg.unresolved.join(' / ')
+)
+
+// 注释里提到过某个「不在构建里」的文件 —— 界面引用原文 + 标出处，不做语义判断
+const bgScan = scanSources(bgRoot)
+const noted = findOrphanNotes(bgRoot, bgScan.orphans).find((n) => n.relPath === 'app/orphan_x.c')
+check(
+  '构建图: 能从构建文件的注释里摘出相关说明',
+  Boolean(noted?.notes.length) && /intentionally excluded/.test(noted!.notes[0].text),
+  JSON.stringify(noted?.notes ?? [])
+)
+check(
+  '构建图: 摘出来的说明带出处，且只摘相关那一两句（不是整块文件头）',
+  noted?.notes[0].file === 'note.cmake' && noted!.notes[0].text.length < 160,
+  `${noted?.notes[0]?.file} len=${noted?.notes[0]?.text.length}`
 )
 
 // ==========================================================================

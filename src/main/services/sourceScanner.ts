@@ -87,6 +87,18 @@ export interface CmakeScanResult {
    * 这些不是 CMake 的源文件，但也确实不在构建里；要跟「漏加」区分开。
    */
   leftovers: Array<{ relPath: string; reason: string; system: string }>
+  /**
+   * 构建文件的注释里提到某个「不在构建里」的文件的地方 —— **引用原文 + 出处**。
+   *
+   * 界面照原样显示，不下「工具判定你故意排除了」这种结论：
+   * 一来措辞穷举不完（intentionally excluded / 故意排除 / 暂时不编译…），
+   * 二来一旦替注释背书，注释过期了界面还在斩钉截铁地说。
+   * 把原话和出处摆出来，判断权留给你。
+   */
+  orphanNotes: Array<{
+    relPath: string
+    notes: Array<{ file: string; line: number; text: string }>
+  }>
   /** **根目标**在构建里的源文件（相对路径，posix 排序后） */
   inBuild: string[]
   /** 磁盘上可编译、但整个工程都没引用到的 —— 这才是「要加进构建」的候选 */
@@ -284,6 +296,11 @@ export function scanSources(projectRoot: string): CmakeScanResult {
     })),
     buildEntry: 'CMakeLists.txt',
     leftovers,
+    // 从构建文件的注释里摘出来的说明 —— 界面**引用原文 + 标出处**，不做语义判断
+    orphanNotes: findOrphanNotes(
+      projectRoot,
+      orphans.filter((o) => !leftoverSet.has(o))
+    ),
     missing,
     stats: {
       compilableOnDisk: abs.length,
@@ -611,4 +628,108 @@ export function listSourceDirs(projectRoot: string): string[] {
   }
   visit(projectRoot, '', 0)
   return [...out].sort((a, b) => a.localeCompare(b))
+}
+
+// --------------------------------------------------------------------------
+// 从构建文件的注释里找「这个文件为什么没进构建」
+// --------------------------------------------------------------------------
+
+/**
+ * 在 CMake 构建文件（CMakeLists.txt / *.cmake）的**注释**里，找提到某个文件的地方。
+ *
+ * 设计上刻意**只引用、不解释**：
+ * 界面上显示的是「注释里写着：<原文>（来自 xxx.cmake:25）」，
+ * 而不是「工具识别出你故意排除了这个文件」。
+ *
+ * 为什么不做语义判断：同一件事有人写 intentionally excluded、有人写 故意排除、
+ * 有人写 暂时不编译 —— 穷举不完；而且一旦工具替这句话背书，
+ * 哪天你改了主意或者那句话是三个月前写的，界面还在斩钉截铁地说「你故意排除的」。
+ * 把原话和出处摆出来，判断权留给你，这样不会过期也不会假装懂你。
+ *
+ * 顺带一个好处：注释里往往还写了**为什么**（比如「不在 Keil 工程里」），
+ * 这句话本身比任何自动标注都有用。
+ */
+export function findOrphanNotes(
+  projectRoot: string,
+  relPaths: string[]
+): Array<{ relPath: string; notes: Array<{ file: string; line: number; text: string }> }> {
+  if (!relPaths.length) return []
+
+  // 只看构建文件：源文件里的注释多半和「为什么不进构建」无关，扫了是噪声
+  const buildFiles: string[] = []
+  const collect = (dir: string, d = 0): void => {
+    if (d > 8) return
+    let es: import('node:fs').Dirent[]
+    try {
+      es = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const e of es) {
+      if (e.isDirectory()) {
+        if (!SKIP_DIRS.has(e.name)) collect(join(dir, e.name), d + 1)
+      } else if (e.name === 'CMakeLists.txt' || /\.cmake$/i.test(e.name)) {
+        buildFiles.push(join(dir, e.name))
+      }
+    }
+  }
+  collect(projectRoot)
+
+  // 注释块：连续的 # 行算一块，这样跨行的句子能完整拿到。
+  // （他们的注释就是两行：第一行点名文件、第二行才写原因）
+  const blocksByFile = new Map<string, Array<{ line: number; text: string }>>()
+  for (const f of buildFiles) {
+    let text: string
+    try {
+      text = readFileSync(f, 'utf8')
+    } catch {
+      continue
+    }
+    const rel = f
+      .slice(projectRoot.length)
+      .replace(/^[\\/]/, '')
+      .split(sep)
+      .join(posix.sep)
+    // 只保留**注释行本身**（带行号）。不把整个注释块拼起来：
+    // user.cmake 的文件头有 27 行注释，整块拼出来是一大坨，夹杂着 FreeRTOS 移植、
+    // ARMCC 之类完全无关的内容，真正有用的只有点名那个文件的一两句。
+    const commentLines: Array<{ line: number; text: string }> = []
+    text.split(/\r?\n/).forEach((raw, i) => {
+      if (/^\s*#/.test(raw)) {
+        commentLines.push({ line: i + 1, text: raw.replace(/^\s*#\s?/, '').trim() })
+      }
+    })
+    blocksByFile.set(rel, commentLines)
+  }
+
+  return relPaths.map((relPath) => {
+    const base = relPath.split('/').pop() ?? relPath
+    const notes: Array<{ file: string; line: number; text: string }> = []
+    for (const [file, lines] of blocksByFile) {
+      for (let i = 0; i < lines.length; i++) {
+        if (!lines[i].text.includes(base)) continue
+        // 摘到这一行，再看下一行是不是同一句话的续行（上一行没写完就接着摘）。
+        // 他们的写法正是这样：
+        //   # * auto_control.c / solve_trajectory.c exist on disk but are NOT part of
+        //   #   the Keil project - intentionally excluded.
+        const parts = [lines[i].text]
+        let next = i + 1
+        while (
+          next < lines.length &&
+          lines[next].line === lines[next - 1].line + 1 &&
+          !/[.。;；]$/.test(parts[parts.length - 1]) &&
+          parts.length < 3
+        ) {
+          parts.push(lines[next].text)
+          next += 1
+        }
+        const text = parts.join(' ').replace(/\s+/g, ' ').trim()
+        // 同一个文件里同样的说法只留一条
+        if (!notes.some((n) => n.file === file && n.text === text)) {
+          notes.push({ file, line: lines[i].line, text })
+        }
+      }
+    }
+    return { relPath, notes }
+  })
 }

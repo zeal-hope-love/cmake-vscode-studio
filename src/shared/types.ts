@@ -639,6 +639,11 @@ export interface CmakeScanResult {
   buildEntry: string
   /** 疑似别的构建系统（Keil/IAR）留下的残留 —— 和「漏加」分开处理 */
   leftovers: Array<{ relPath: string; reason: string; system: string }>
+  /** 构建文件的注释里提到某个「不在构建里」的文件的地方 —— 引用原文 + 出处，不做语义判断 */
+  orphanNotes: Array<{
+    relPath: string
+    notes: Array<{ file: string; line: number; text: string }>
+  }>
   stats: {
     compilableOnDisk: number
     headersOnDisk: number

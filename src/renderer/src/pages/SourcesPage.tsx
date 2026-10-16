@@ -424,23 +424,44 @@ export function SourcesPage(): React.JSX.Element {
                   </Button>
                 </div>
                 <div className="list list__scroll" style={{ maxHeight: 260 }}>
-                  {orphans.map((p) => (
-                    <div key={p} className="list__row">
-                      <Checkbox
-                        checked={checked.has(p)}
-                        onChange={(on) => {
-                          const next = new Set(checked)
-                          if (on) next.add(p)
-                          else next.delete(p)
-                          setChecked(next)
-                        }}
-                      />
-                      <span className="mono grow">{p}</span>
-                      <Button size="sm" onClick={() => void openPreview([p], [])}>
-                        加入
-                      </Button>
-                    </div>
-                  ))}
+                  {orphans.map((p) => {
+                    const notes = scan.orphanNotes.find((n) => n.relPath === p)?.notes ?? []
+                    return (
+                      <div key={p} className="list__row" style={{ alignItems: 'flex-start' }}>
+                        <div style={{ paddingTop: 3 }}>
+                          <Checkbox
+                            checked={checked.has(p)}
+                            onChange={(on) => {
+                              const next = new Set(checked)
+                              if (on) next.add(p)
+                              else next.delete(p)
+                              setChecked(next)
+                            }}
+                          />
+                        </div>
+                        <div className="grow">
+                          <div className="mono">{p}</div>
+                          {/*
+                            注释里提到过这个文件 —— **原文照引 + 标出处**，不下结论。
+                            界面上说的是「注释里写着这样一句」，而不是「你故意排除了它」：
+                            措辞穷举不完，而且注释会过期，工具不该替它背书。
+                          */}
+                          {notes.map((n, i) => (
+                            <div key={i} className="faint small" style={{ marginTop: 2 }}>
+                              构建文件的注释里提到它：{n.text}
+                              <span className="mono">
+                                {' '}
+                                ← {n.file}:{n.line}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        <Button size="sm" onClick={() => void openPreview([p], [])}>
+                          加入
+                        </Button>
+                      </div>
+                    )
+                  })}
                   {orphans.length === 0 && <div className="faint small">没有匹配的文件</div>}
                 </div>
               </Card>
