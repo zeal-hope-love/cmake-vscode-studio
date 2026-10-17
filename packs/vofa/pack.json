@@ -2,7 +2,7 @@
   "id": "vofa",
   "name": "VOFA+ 在线调参",
   "summary": "把注册的变量周期发到 VOFA+ 画波形，并支持 set/get/list 在线改参数。不用回 CubeMX、不用重烧。",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "icon": "waveform",
 
   "params": [

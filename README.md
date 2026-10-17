@@ -37,6 +37,8 @@
 
 - **工程检测** —— 自动找工程根（支持 VSCode 当前打开的 / 最近打开的 / 手输路径），读 CMake、CubeMX、现有 `.vscode` 配置
 - **四类配置文件的可视化编辑** —— `launch.json` / `tasks.json` / `settings.json` / `c_cpp_properties.json`，改完即时生效，不用点保存
+- **构建目标与源文件** —— 图形化改 `CMakeLists.txt`：把漏掉的源文件勾进构建，不用手改 CMake。自带差异预览与一键还原
+- **调试模块（模块包）** —— 往工程里装调试代码。目前是 **VOFA+ 在线调参**：扫出工程里的 PID 结构体，勾一勾就注册好波形通道和在线可调参数
 - **写入前差异预览** —— 逐文件 diff，确认后才落盘；可选自动备份
 - **模板系统** —— 把一套配置存成模板，跨工程复用；内置占位符（`${elfName}`、`${device}`…）
 - **多工程批量套用** —— 一次把模板套到多个工程
@@ -56,8 +58,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `CMake-VSCode-Configurator-1.0.0-x64.exe` | **安装版**，有开始菜单项，可覆盖升级 |
-| `CMake-VSCode-Configurator-1.0.0-portable.exe` | **免安装版**，单文件，双击就跑 |
+| `CMake-VSCode-Configurator-1.1.0-x64.exe` | **安装版**，有开始菜单项，可覆盖升级 |
+| `CMake-VSCode-Configurator-1.1.0-portable.exe` | **免安装版**，单文件，双击就跑 |
 
 两个都是**自包含**的，不需要另装 Node 或 Electron。
 
@@ -189,6 +191,84 @@ generator / 构建目录等。工具路径可以从「工具与路径」页一�
 点按钮跑任务，输出实时打在下方的日志里。这一步和 VSCode 里按 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>
 等价，只是在工具里也能跑（方便配置过程中验证）。
 
+### 源码 · 构建目标与源文件
+
+![构建目标与源文件](docs/screenshots/15-sources.png)
+
+图形化改 `CMakeLists.txt`，解决两个最常见的烦事：**文件漏加了忘了加**、和**别人写的 CMake 看不懂该改哪**。
+
+- **不在构建里** —— 磁盘上有、但整个构建定义都没引用的可编译文件。勾选 → 看 diff → 一键加入
+- **已在构建里** —— 反过来，想看某个文件在不在构建里
+- **新建源文件** —— 目录从下拉里选，自动生成带 `#include` guard 的骨架
+
+#### 它会读**整个构建图**，不只是根 `CMakeLists.txt`
+
+CMake 的标准做法是**每个目录一个 `CMakeLists.txt`**，由根文件用 `add_subdirectory()` / `include()` 串起来 ——
+它们合起来描述**同一个**构建，不是多个工程。所以判断「某个文件在不在构建里」时，工具会把
+子目录的 `CMakeLists.txt`、`include()` 进来的 `.cmake`、`set()` 的变量、`OBJECT` 库全部算进去。
+
+界面上也会把这些讲清楚：
+
+- **构建入口永远是根 `CMakeLists.txt`**（`cmake -S 工程根` 从它开始读），**不能选** —— 换入口就是换工程
+- 能选的是**构建哪个目标**（`cmake --build build --target 名字`）
+- 工程里一共几个目标、各自声明在哪个文件，都列出来
+- 本页只改**根文件里**那个目标；其它目标在子文件 / 生成文件里，改了会被 CubeMX 覆盖
+
+**解析不全时会明确告诉你**，并禁用「加入构建」—— 宁可说"我看不全"，也不给一份看起来确定的错清单。
+
+#### 两种情况刻意分开显示
+
+| | 含义 | 该怎么办 |
+| --- | --- | --- |
+| **不在构建里** | 可能是漏加了 | 加进 CMakeLists |
+| **疑似残留** | Keil / IAR 时代留下的文件（`MDK-ARM/` 之类），不属于 CMake 构建 | **移到回收站**（可还原） |
+
+混在一起很容易把 Keil 时代的旧代码加进构建，所以分开列，并且清理走的是**回收站**而不是永久删除。
+
+如果构建文件的注释里提到过某个「不在构建里」的文件，界面会把**原话和出处**引出来：
+
+> 构建文件的注释里提到它：`* auto_control.c / solve_trajectory.c exist on disk but are NOT part of the Keil project - intentionally excluded.` ← `cmake/user.cmake:22`
+
+刻意**只引用、不下结论** —— 工具不会说"判定你故意排除了它"，判断权留给你。
+
+### 源码 · 调试模块
+
+![调试模块](docs/screenshots/16-packs.png)
+
+**模块包**：把一段调试代码装进工程，并把该改的地方一次改对。目前提供两个包。
+
+#### VOFA+ 在线调参
+
+调 PID 不用改代码、不用重烧、不用回 CubeMX：
+
+- **波形监看** —— 挑出来的变量按固定频率打包成 JustFloat 帧发到 VOFA+ 画波形
+- **在线调参** —— 文本命令 `list` / `get 名字` / `set 名字 值`，直接写变量，立即生效
+
+页面按「先看清楚，再动手」分六步，**前三步完全不碰磁盘**：
+
+1. 选模块
+2. **兼容性检查**（只读）—— 这个工程能不能装、工具替你适配了什么
+3. 参数 —— 大部分是探测出来的，一般不用手改
+4. **调参目标** —— 扫出工程里的 `pid_type_def` / `gimbal_PID_t`，勾一个就注册一整组 `Kp/Ki/Kd/maxout/maxiout`
+5. **监看通道** —— 遥控器通道预设 + 自定义变量
+6. **改动清单**（逐文件 diff）→ 写入（先存快照）
+
+#### 为什么它不会把你的工程改坏
+
+- **不猜实例名** —— PID 大多是结构体成员，注册要通过实例访问。工具只认工程里**真实存在**的 `extern` 声明，
+  查不到就留空让你填，而不是编一个（编错了要编译才发现）
+- **生成代码带判空** —— `get_xxx_point()` 在初始化前可能返回 NULL，生成的绑定会包一层 `if (xxx != NULL)`
+- **改勾选只重新生成一个文件** —— 调参目标全在 `application/vofa/vofa_bind.c` 里，
+  `CMakeLists.txt` / `freertos.c` / 模块本体都不用再碰
+- **写入前存快照**，可一键还原（连新建的文件一起删掉）
+
+#### 零 CubeMX 改动
+
+串口 RX 默认走**逐字节中断**（命令是人手敲的，一次几十字节，够用），
+模块在运行时自己开 NVIC 并自带中断入口 —— **一行 CubeMX 都不用改**。
+
+如果工程里已经配好了 RX DMA / 串口中断，兼容性检查会自动识别并切换到对应模式。
+
 ### 模板 · 模板与配置
 
 ![模板与配置](docs/screenshots/07-templates.png)
@@ -275,7 +355,7 @@ ${probeLabel}  ${projectRoot}
 
 ## 它会写哪些文件
 
-全部落在工程根的 `.vscode/` 下：
+配置类全部落在工程根的 `.vscode/` 下：
 
 | 文件 | 内容 |
 | --- | --- |
@@ -285,12 +365,24 @@ ${probeLabel}  ${projectRoot}
 | `c_cpp_properties.json` | IntelliSense 配置 |
 | `openocd-<target>-<probe>.cfg` | 探针接线配置（`source [find interface/...]` + `target/...`） |
 
+**「构建目标与源文件」** 只改工程根的 `CMakeLists.txt`（往里插源文件名）。
+
+**「调试模块」** 会额外动这些：
+
+| 文件 | 改动 |
+| --- | --- |
+| `application/vofa/*` | 新建模块本体 + 生成配置与绑定（`vofa_config.h` / `vofa_bind.c`） |
+| `CMakeLists.txt` | 加两个源文件（复用上面的编辑引擎） |
+| `Src/freertos.c` | 加 `osThreadDef` + `osThreadCreate` 建任务 |
+| `application/remote_control.c` | 加 `#define SBUS_FORWARD_TO_USART1 0` 释放串口 TX（可选，找不到就跳过） |
+
 写入格式统一 **UTF-8 无 BOM + LF + 4 空格缩进**，已有的其它键保持原样。
 
-**写入策略是直接覆盖**，但有两道防线：
+**写入策略是直接覆盖**，但有三道防线：
 
 - 写入前逐文件差异预览，确认后才写；
-- 每次写入自动存快照，可一键还原到写入前。
+- 每次写入自动存快照，可一键还原到写入前（新建的文件会一并删掉）；
+- 「调试模块」如果存快照失败会**直接中止** —— 说好可还原就必须真的可还原。
 
 工程根之外一律拒绝写入（`../` 越界会被拦下）。
 
@@ -344,6 +436,9 @@ history.json      历史记录
 
 > 目前**没有做应用内自动更新**（未集成 `electron-updater`），升级需要手动下载新版本。
 > 后续加自动更新时，用的是同一套 NSIS 差分包机制，可以直接覆盖。
+
+**升级到 1.1.0 不需要做任何迁移**：设置、模板、快照、历史记录的格式都没变。
+`packs/`（模块包）是新增的，放在**安装目录**里，不在数据目录，所以也不影响你已有的数据。
 
 ---
 
@@ -404,7 +499,13 @@ cmake-vscode-studio/
    │     ├─ settingsStore.ts 应用设置
    │     ├─ templateStore.ts 模板
    │     ├─ historyStore.ts  历史记录
-   │     └─ runner.ts        构建/烧录进程管理
+   │     ├─ runner.ts        构建/烧录进程管理
+   │     ├─ cmakeModel.ts    带位置信息的 CMake 解析（能回写，不只是读）
+   │     ├─ cmakeEdit.ts     在 CMakeLists 里增删源文件（生成最小 diff）
+   │     ├─ sourceScanner.ts 「构建目标与源文件」的数据来源
+   │     ├─ packStore.ts     模块包装载、工程探测、兼容性检查、PID 扫描
+   │     ├─ packInstaller.ts 模块包渲染与安装（含补丁计划）
+   │     └─ snapshotStore.ts 写入快照与还原
    ├─ preload/index.ts       contextBridge 暴露受控 API
    └─ renderer/src/
       ├─ App.tsx             外壳与路由
@@ -412,6 +513,15 @@ cmake-vscode-studio/
       ├─ styles/global.css   深色/浅色主题
       ├─ components/         UI 组件、diff 视图、预览弹窗、标题栏、侧栏
       └─ pages/              功能页面
+├─ packs/                   模块包（运行时读取；打包后复制到 resources/packs）
+│  └─ vofa/
+│     ├─ pack.json          参数、依赖、要打哪些补丁、手动步骤
+│     ├─ README.md          这个包怎么用
+│     └─ files/
+│        ├─ vofa_task.c/h   模块本体（通用，不随工程变）
+│        ├─ vofa_types.h    fp32 / bool_t 来源适配
+│        ├─ vofa_config.h.tpl  工具生成：串口 / 频率 / 开关
+│        └─ vofa_bind.c.tpl    工具生成：调哪些变量（界面上勾的那些）
 ```
 
 **安全边界**：渲染进程开启 `contextIsolation`、关闭 `nodeIntegration`，拿不到任何 Node 能力；
