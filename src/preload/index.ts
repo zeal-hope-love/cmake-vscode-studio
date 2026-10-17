@@ -25,6 +25,7 @@ import {
   type HistoryEntry,
   type PackInspectResult,
   type PackPlanOptions,
+  type RenamePlan,
   type PlanRequest,
   type PlannedFile,
   type ProjectCandidate,
@@ -114,6 +115,16 @@ const api: StudioApi = {
       ok: boolean
       trashed: string[]
       errors: string[]
+    }>,
+
+  projectRenamePlan: (projectRoot, newName, withIoc) =>
+    ipcRenderer.invoke(IPC.projectRenamePlan, projectRoot, newName, withIoc) as Promise<RenamePlan>,
+  projectRenameApply: (plan: RenamePlan) =>
+    ipcRenderer.invoke(IPC.projectRenameApply, plan) as Promise<{
+      ok: boolean
+      written: string[]
+      errors: string[]
+      snapshotId: string | null
     }>,
 
   cmakeSignature: (projectRoot) =>

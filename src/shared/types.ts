@@ -95,11 +95,33 @@ export interface VscodeFileState {
  * 不信任调用方传来的东西。
  */
 export interface ProjectIssueFix {
-  kind: 'remove-build-artifacts'
+  kind: 'remove-build-artifacts' | 'rename-project'
   label: string
   /** 相对工程根的路径 */
   files: string[]
   hint: string
+  /** kind = rename-project 时：要改成什么名字（通常是文件夹名） */
+  targetName?: string
+}
+
+/** 改名计划：每个文件的改前/改后全文，交给界面做 diff */
+export interface RenameFileChange {
+  /** 相对工程根 */
+  path: string
+  action: 'create' | 'patch' | 'delete' | 'skip'
+  before: string | null
+  after: string | null
+  note: string
+}
+
+export interface RenamePlan {
+  root: string
+  newName: string
+  changes: RenameFileChange[]
+  /** 说明这次改了什么、为什么有些东西不改 */
+  notes: string[]
+  /** 有致命问题，不能改 */
+  blocked: boolean
 }
 
 export interface ProjectIssue {
@@ -740,6 +762,8 @@ export const IPC = {
   cmakeApply: 'cmake:apply',
   cmakeCreateFile: 'cmake:create-file',
   cmakeSignature: 'cmake:signature',
+  projectRenamePlan: 'project:renamePlan',
+  projectRenameApply: 'project:renameApply',
   cmakeTrashFiles: 'cmake:trashFiles',
 
   packList: 'pack:list',
@@ -814,6 +838,16 @@ export interface StudioApi {
   /** 落盘（先存快照）+ 记历史 */
   cmakeApply(req: CmakeChangeRequest): Promise<CmakeApplyResult>
   /** 算一个「工程变了没」的指纹，界面据此决定要不要重新扫描 */
+  /** 改名：先算计划（不写盘），看 diff 再决定 */
+  projectRenamePlan(projectRoot: string, newName: string, withIoc?: boolean): Promise<RenamePlan>
+  /** 落盘（先存快照，可还原） */
+  projectRenameApply(plan: RenamePlan): Promise<{
+    ok: boolean
+    written: string[]
+    errors: string[]
+    snapshotId: string | null
+  }>
+
   cmakeSignature(projectRoot: string): Promise<CmakeSignature>
   /**
    * 把文件**移到回收站**（不是直接删）—— 可还原。

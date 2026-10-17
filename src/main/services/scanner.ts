@@ -247,6 +247,16 @@ function describeVscodeFile(name: string, data: unknown): string {
   return '存在'
 }
 
+/**
+ * 两个工程名算不算「一样」。
+ * 忽略大小写，并把 - 和 _ 视作等价：很多工程文件夹用 -、CMake 目标用 _，
+ * 这种不该一直报警告。
+ */
+function sameProjectName(a: string, b: string): boolean {
+  const norm = (s: string): string => s.toLowerCase().replace(/[-_]/g, '')
+  return norm(a) === norm(b)
+}
+
 export function scanProject(projectPath: string, resolveUp = true): ProjectInfo {
   let root = projectPath
   if (resolveUp) {
@@ -471,6 +481,33 @@ export function scanProject(projectPath: string, resolveUp = true): ProjectInfo 
           : undefined
       )
     }
+  }
+
+  /**
+   * 目录名 vs CMake 工程名。
+   *
+   * 这是「从模板复制一个工程、只改了文件夹名」留下的典型坑：目录叫 target-car，
+   * 而 CMakeLists.txt 里还写着 set(CMAKE_PROJECT_NAME standard_robot)，
+   * 于是构建产物叫 standard_robot.elf，但 VSCode 的构建分析器、别人看目录名、
+   * Keil 工程覆盖都按 target-car 去找 —— 对不上，还很难查（文件都在，就是不显示）。
+   *
+   * 这里只**提示**，不自动改：改名会改变产物名，可能牵动烧录脚本、别人的 mdk 工程，
+   * 得由用户拍板。确认了再点按钮走 projectRenamePlan/Apply（带 diff 和快照）。
+   */
+  const folderName = basename(root)
+  const cmakeName = parsed.projectName ?? null
+  if (cmakeName && !sameProjectName(folderName, cmakeName)) {
+    warn(
+      `工程目录叫 ${folderName}，但 CMake 里声明的工程名是 ${cmakeName} —— ` +
+        `构建产物会叫 ${cmakeName}.elf，而 VSCode 的构建分析器等工具按文件夹名找，容易对不上。`,
+      {
+        kind: 'rename-project',
+        label: `把工程名改成 ${folderName}`,
+        files: ['CMakeLists.txt'],
+        hint: `set(CMAKE_PROJECT_NAME ${cmakeName}) → ${folderName}（.ioc 也会一起改名）`,
+        targetName: folderName
+      }
+    )
   }
 
   const device = ioc?.device ?? null

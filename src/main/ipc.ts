@@ -49,7 +49,7 @@ import {
   type WriteResult
 } from '@shared/types'
 import type { PackApplyResult, PackManifest, PackPlan } from '@shared/packTypes'
-import type { PackInspectResult, PackPlanOptions } from '@shared/types'
+import type { PackInspectResult, PackPlanOptions, RenamePlan } from '@shared/types'
 import { defaultGenOptions, generateBundle } from './services/generators'
 import { adaptTemplateOptions } from '@shared/templateAdapt'
 import { scanProject } from './services/scanner'
@@ -88,6 +88,7 @@ import {
 } from './services/snapshotStore'
 import { currentUserDataDir, userDataPath } from './services/store'
 import { ProcessRunner } from './services/runner'
+import { applyProjectRename, planProjectRename } from './services/projectRename'
 
 const runner = new ProcessRunner()
 
@@ -424,6 +425,19 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     result.ok = result.errors.length === 0
     return result
   })
+
+  // ---- 改工程名（目录名 vs CMake 工程名 不一致时用）------------------------
+  //
+  // 检测到不一致时界面给一个按钮，点一下先出 diff（projectRenamePlan，只算不写），
+  // 确认后才落盘（projectRenameApply，先存快照）。
+  // 改名字是不可逆操作，所以宁可多一步确认。
+  ipcMain.handle(
+    IPC.projectRenamePlan,
+    async (_e, projectRoot: string, newName: string, withIoc?: boolean) =>
+      planProjectRename(projectRoot, newName, withIoc ?? true)
+  )
+
+  ipcMain.handle(IPC.projectRenameApply, async (_e, plan: RenamePlan) => applyProjectRename(plan))
 
   // ---- 模块包（vofa 等）--------------------------------------------------
   //

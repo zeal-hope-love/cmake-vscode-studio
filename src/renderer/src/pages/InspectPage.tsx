@@ -22,8 +22,9 @@ import {
   Spinner
 } from '../components/ui'
 import { NoProject } from '../components/NoProject'
+import { DiffView } from '../components/DiffView'
 import { Icons } from '../components/icons'
-import type { ProjectIssueFix } from '@shared/types'
+import type { ProjectIssueFix, RenamePlan } from '@shared/types'
 
 export default function InspectPage(): React.JSX.Element {
   const project = useStudio((s) => s.project)
@@ -35,10 +36,17 @@ export default function InspectPage(): React.JSX.Element {
   const clearVscodeConfig = useStudio((s) => s.clearVscodeConfig)
   const cleanArtifacts = useStudio((s) => s.cleanArtifacts)
   const setPage = useStudio((s) => s.setPage)
+  const refreshProject = useStudio((s) => s.refreshProject)
+  const notify = useStudio((s) => s.notify)
+  const refreshHistory = useStudio((s) => s.refreshHistory)
 
   const [confirming, setConfirming] = React.useState(false)
   /** 待确认的「一键修复」，比如清理陈旧产物 */
   const [confirmFix, setConfirmFix] = React.useState<ProjectIssueFix | null>(null)
+  /** 改名计划（只算不写，界面看 diff 用） */
+  const [renamePlan, setRenamePlan] = React.useState<RenamePlan | null>(null)
+  const [renameBusy, setRenameBusy] = React.useState(false)
+  const [renameIdx, setRenameIdx] = React.useState(0)
 
   React.useEffect(() => {
     void refreshSnapshots()
@@ -56,6 +64,44 @@ export default function InspectPage(): React.JSX.Element {
   }
 
   // 本工具管理的文件现在还在不在
+  /**
+   * 打开改名流程：先向主进程要「改动计划」（只算不写），界面展示 diff，
+   * 确认后才 apply。改名会改变构建产物名，属于不可逆操作，所以多这一步。
+   */
+  const openRename = async (newName: string): Promise<void> => {
+    setRenameBusy(true)
+    try {
+      const plan = await window.api.projectRenamePlan(projectRoot, newName, true)
+      setRenamePlan(plan)
+      setRenameIdx(0)
+    } finally {
+      setRenameBusy(false)
+    }
+  }
+
+  const applyRename = async (): Promise<void> => {
+    if (!renamePlan) return
+    setRenameBusy(true)
+    try {
+      const r = await window.api.projectRenameApply(renamePlan)
+      if (!r.ok) {
+        notify('err', r.errors.join('；') || '改名失败')
+        return
+      }
+      notify(
+        'ok',
+        `已改名成 ${renamePlan.newName}（${r.written.length} 个文件）。建议清理 build 后重新构建。`
+      )
+      setRenamePlan(null)
+      await refreshHistory()
+      await refreshProject()
+    } catch (err) {
+      notify('err', `改名失败：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setRenameBusy(false)
+    }
+  }
+
   const present = Object.values(project.vscodeFiles).filter((f) => f.exists)
   const cfgFiles = project.openocdCfgFiles.length
 
@@ -92,11 +138,25 @@ export default function InspectPage(): React.JSX.Element {
                       {issue.message}
                       {issue.fix && (
                         <div className="faint small" style={{ marginTop: 4 }}>
-                          会删掉：<span className="mono">{issue.fix.hint}</span>
+                          {issue.fix.kind === 'rename-project' ? '会改成：' : '会删掉：'}
+                          <span className="mono">{issue.fix.hint}</span>
                         </div>
                       )}
                     </span>
-                    {issue.fix && (
+                    {issue.fix && issue.fix.kind === 'rename-project' && (
+                      <Button
+                        size="sm"
+                        disabled={busy}
+                        title={
+                          '把 CMakeLists.txt 里的工程名改成文件夹名，构建产物就会跟着改名。' +
+                          '点开先看 diff，确认后才写。写之前自动存快照，可还原。'
+                        }
+                        onClick={() => void openRename(issue.fix!.targetName!)}
+                      >
+                        改名
+                      </Button>
+                    )}
+                    {issue.fix && issue.fix.kind === 'remove-build-artifacts' && (
                       <Button
                         size="sm"
                         variant="danger"
@@ -286,6 +346,91 @@ export default function InspectPage(): React.JSX.Element {
               </div>
             ))}
           </div>
+        </Modal>
+      )}
+
+      {/*
+        改名确认：先看改动清单（逐文件 diff），确认后才写。
+        改名会改变构建产物名，属于不可逆操作 —— 所以不直接执行，多一道确认。
+      */}
+      {renamePlan && (
+        <Modal
+          title={`把工程名改成 ${renamePlan.newName}？`}
+          width={1000}
+          onClose={() => setRenamePlan(null)}
+          footer={
+            <>
+              <Button onClick={() => setRenamePlan(null)}>取消</Button>
+              <Button
+                variant="primary"
+                disabled={renameBusy || renamePlan.blocked}
+                onClick={() => void applyRename()}
+              >
+                {renameBusy ? <Spinner /> : null}
+                确认改名（{renamePlan.changes.filter((c) => c.action !== 'skip').length} 个文件）
+              </Button>
+            </>
+          }
+        >
+          {renamePlan.blocked ? (
+            <Alert kind="err">
+              这次改不了：
+              {renamePlan.notes.map((n, i) => (
+                <div key={i} className="small">
+                  · {n}
+                </div>
+              ))}
+            </Alert>
+          ) : (
+            <Alert kind="info">
+              会改动 <b>{renamePlan.changes.filter((c) => c.action !== 'skip').length}</b> 个文件。
+              写之前自动存快照，可一键还原。
+            </Alert>
+          )}
+
+          <div className="small" style={{ marginTop: 8 }}>
+            {renamePlan.notes.map((n, i) => (
+              <div key={i}>· {n}</div>
+            ))}
+          </div>
+
+          <div className="list list__scroll" style={{ maxHeight: 160, marginTop: 10 }}>
+            {renamePlan.changes.map((c, i) => (
+              <div
+                key={c.path}
+                className="list__row"
+                style={{ cursor: 'pointer' }}
+                onClick={() => setRenameIdx(i)}
+              >
+                <span className="mono small" style={{ width: 62, flex: '0 0 auto' }}>
+                  {c.action === 'create'
+                    ? '＋新建'
+                    : c.action === 'patch'
+                      ? '改几行'
+                      : c.action === 'delete'
+                        ? '删除'
+                        : '跳过'}
+                </span>
+                <div className="grow">
+                  <div className="mono small">{c.path}</div>
+                  <div className="faint small">{c.note}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {renamePlan.changes[renameIdx]?.before !== null &&
+            renamePlan.changes[renameIdx]?.after !== null && (
+              <div style={{ marginTop: 10 }}>
+                <div className="small bold mb-8">
+                  差异：<span className="mono">{renamePlan.changes[renameIdx].path}</span>
+                </div>
+                <DiffView
+                  previous={renamePlan.changes[renameIdx].before ?? ''}
+                  current={renamePlan.changes[renameIdx].after ?? ''}
+                />
+              </div>
+            )}
         </Modal>
       )}
     </>

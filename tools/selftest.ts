@@ -25,6 +25,11 @@ import {
 } from '../src/main/services/cmakeModel'
 import { planSourceEdit } from '../src/main/services/cmakeEdit'
 import { findOrphanNotes, scanSources, renderNewFile } from '../src/main/services/sourceScanner'
+import {
+  applyProjectRename,
+  planProjectRename,
+  sameName as sameProjectName
+} from '../src/main/services/projectRename'
 import { detectTools, findSvdFile } from '../src/main/services/toolDetector'
 import { planFiles, writeFiles } from '../src/main/services/writer'
 import {
@@ -1540,6 +1545,84 @@ check(
   '构建图: 摘出来的说明带出处，且只摘相关那一两句（不是整块文件头）',
   noted?.notes[0].file === 'note.cmake' && noted!.notes[0].text.length < 160,
   `${noted?.notes[0]?.file} len=${noted?.notes[0]?.text.length}`
+)
+
+// ==========================================================================
+// 13. 工程改名：目录名 vs CMake 工程名
+//
+// 由来：从模板复制了工程、只改了文件夹名，CMakeLists.txt 里还留着模板的名字，
+// 于是产物叫 <旧名>.elf，而 VSCode 的构建分析器按文件夹名找 —— 对不上，很难查。
+// ==========================================================================
+
+section('13. 工程改名：目录名 vs CMake 工程名')
+
+const rnRoot = join(sandbox, 'rename-proj')
+mkdirSync(rnRoot, { recursive: true })
+writeFileSync(
+  join(rnRoot, 'CMakeLists.txt'),
+  `cmake_minimum_required(VERSION 3.22)
+set(CMAKE_PROJECT_NAME old_name)
+project(\${CMAKE_PROJECT_NAME})
+add_executable(\${CMAKE_PROJECT_NAME})
+target_link_directories(\${CMAKE_PROJECT_NAME} PRIVATE
+)
+`,
+  'utf8'
+)
+writeFileSync(
+  join(rnRoot, 'old_name.ioc'),
+  'ProjectManager.ProjectName=old_name\nMcu.CPN=STM32F407IGH6\n',
+  'utf8'
+)
+
+check('改名: 名字比较忽略大小写和 -/_ 区别', sameProjectName('target-car', 'target_car'))
+
+const rnPlan = planProjectRename(rnRoot, 'target-car', true)
+check('改名: 计划不阻塞', !rnPlan.blocked, rnPlan.notes.join(' / '))
+check(
+  '改名: CMakeLists 里只换 set(CMAKE_PROJECT_NAME) 的值',
+  (() => {
+    const a = rnPlan.changes.find((c) => c.path === 'CMakeLists.txt')?.after ?? ''
+    // 引用 ${CMAKE_PROJECT_NAME} 的地方必须原样保留，不能被替换成字面量
+    return (
+      a.includes('set(CMAKE_PROJECT_NAME target-car)') &&
+      a.includes('add_executable(${CMAKE_PROJECT_NAME})') &&
+      a.includes('target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE')
+    )
+  })(),
+  rnPlan.changes.find((c) => c.path === 'CMakeLists.txt')?.after?.slice(0, 120)
+)
+check(
+  '改名: .ioc 改名 = 新建新名 + 删除旧名',
+  rnPlan.changes.some((c) => c.path === 'target-car.ioc' && c.action === 'create') &&
+    rnPlan.changes.some((c) => c.path === 'old_name.ioc' && c.action === 'delete')
+)
+check(
+  '改名: 新 .ioc 内部 ProjectName 也改了',
+  (rnPlan.changes.find((c) => c.path === 'target-car.ioc')?.after ?? '').includes(
+    'ProjectManager.ProjectName=target-car'
+  )
+)
+check('改名: 计划阶段不写盘', readFileSync(join(rnRoot, 'CMakeLists.txt'), 'utf8').includes('old_name'))
+
+const rnApply = applyProjectRename(rnPlan)
+check('改名: 落盘成功且有快照', rnApply.ok && Boolean(rnApply.snapshotId), rnApply.errors.join(';'))
+check(
+  '改名: 磁盘上确实是新名字，旧 .ioc 已不存在',
+  readFileSync(join(rnRoot, 'CMakeLists.txt'), 'utf8').includes('set(CMAKE_PROJECT_NAME target-car)') &&
+    !existsSync(join(rnRoot, 'old_name.ioc')) &&
+    existsSync(join(rnRoot, 'target-car.ioc'))
+)
+
+// 还原后应该回到旧名字、旧 .ioc 回来
+const rnBack = restoreSnapshot(rnRoot, rnApply.snapshotId!)
+check(
+  '改名: 快照能还原（旧名字回来、新 .ioc 被删掉）',
+  rnBack.errors.length === 0 &&
+    readFileSync(join(rnRoot, 'CMakeLists.txt'), 'utf8').includes('old_name') &&
+    existsSync(join(rnRoot, 'old_name.ioc')) &&
+    !existsSync(join(rnRoot, 'target-car.ioc')),
+  rnBack.errors.join(';')
 )
 
 // ==========================================================================

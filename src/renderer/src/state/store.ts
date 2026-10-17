@@ -158,6 +158,8 @@ interface StudioState {
   writeNow: (backup: boolean) => Promise<WriteResult | null>
 
   refreshSnapshots: () => Promise<void>
+  /** 重新检测当前工程（改名、还原之后用） */
+  refreshProject: () => Promise<void>
   restoreSnapshot: (snapshotId: string) => Promise<void>
   bindWriteProgress: () => () => void
 
@@ -647,6 +649,13 @@ export const useStudio = create<StudioState>()((set, get) => ({
   // ------------------------------------------------------------------------
   // 快照 / 还原
   // ------------------------------------------------------------------------
+
+  refreshProject: async () => {
+    const root = get().projectRoot
+    if (!root) return
+    const reloaded = await window.api.loadProject(root, get().options ?? undefined, false)
+    set({ project: reloaded.project, tools: reloaded.tools })
+  },
 
   refreshSnapshots: async () => {
     const { projectRoot } = get()
