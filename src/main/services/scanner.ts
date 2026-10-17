@@ -2,7 +2,7 @@
  * 工程检测总入口：把 CMake / CubeMX / 构建产物 / .vscode 现状汇总成 ProjectInfo。
  */
 
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, join, relative, resolve } from 'node:path'
 import type {
   BuildDir,
@@ -21,6 +21,7 @@ import {
 import { findIocFile, parseIoc } from './ioc'
 import { readJsonFile } from './jsonc'
 import { findProjectRoot, toPosix } from './paths'
+import { inspectVscodeOwnership } from './vscodeOwnership'
 
 /** 本工具负责读写的 .vscode 文件（顺序即界面展示顺序） */
 export const MANAGED_VSCODE_FILES: Array<[string, string]> = [
@@ -510,6 +511,46 @@ export function scanProject(projectPath: string, resolveUp = true): ProjectInfo 
     )
   }
 
+  /**
+   * .vscode/settings.json 里的 `cmake.cmakePath` 指向的程序是否真的存在。
+   *
+   * 这坑很隐蔽：配置文件格式完全合法、界面上也看不出问题，但 CMake Tools 配置不起来，
+   * 于是 VS Code 的构建分析器拿不到构建目标，退回按文件夹名猜 —— 猜出来的 ELF 不存在，
+   * 报「映射文件数据不可用」。这类问题**必须工具主动查出来**，否则根本没法定位。
+   *
+   * 常见来源：STM32Cube for VS Code 扩展写了个 `cube-cmake`（它的私有包装），
+   * 但那个程序并不在 PATH 里。本工具不自动改别人的配置，只报出来 + 给正确路径建议。
+   */
+  try {
+    const settingsFile = join(vscodeDir, 'settings.json')
+    if (existsSync(settingsFile)) {
+      const j = JSON.parse(readFileSync(settingsFile, 'utf8')) as Record<string, unknown>
+      const raw = j['cmake.cmakePath']
+      if (typeof raw === 'string' && raw.trim()) {
+        const val = raw.trim()
+        const bare = !/[\\/]/.test(val)
+        const found = bare
+          ? (process.env.PATH ?? '')
+              .split(';')
+              .filter(Boolean)
+              .some((d) => existsSync(join(d, `${val}.exe`)) || existsSync(join(d, val)))
+          : existsSync(val)
+        if (!found) {
+          warn(
+            `.vscode/settings.json 里 cmake.cmakePath 设成了「${val}」，但找不到这个程序 —— ` +
+              `CMake Tools 会配置失败，VS Code 的构建分析器等工具也就拿不到构建目标（表现为「映射文件数据不可用」）。` +
+              `建议改成真实的 cmake 路径，或者删掉这一项让它走 PATH。`,
+            undefined
+          )
+        }
+      }
+    }
+  } catch {
+    /* settings.json 解析不了就当没有，别为了这个把检测搞崩 */
+  }
+  /** 哪些 .vscode 文件确实是本工具写的（按内容特征认） */
+  const ownership = inspectVscodeOwnership(root)
+
   const device = ioc?.device ?? null
   const toolchainLower = (toolchainHint ?? '').toLowerCase()
   const isEmbedded =
@@ -536,6 +577,10 @@ export function scanProject(projectPath: string, resolveUp = true): ProjectInfo 
     toolchainHint,
     vscodeDir,
     vscodeFiles,
+    // 「哪些是本工具写的」按**内容特征**判断，不是看文件在不在 ——
+    // 只看存在性的话，清除配置时会把 STM32Cube / CMake Tools 扩展写的同名文件删掉。
+    toolWrittenFiles: ownership.ours,
+    foreignVscodeFiles: ownership.all.filter((v) => !v.ours).map((v) => ({ path: v.path, why: v.why })),
     openocdCfgFiles,
     includeDirs: relativizeCmakePaths(includeDirsFromRoot, root),
     defines: definesFromRoot,

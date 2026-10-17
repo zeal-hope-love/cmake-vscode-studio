@@ -16,6 +16,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { dirname, join, normalize, resolve, sep } from 'node:path'
+import { inspectVscodeOwnership } from './vscodeOwnership'
 import type {
   FilePayload,
   PlanRequest,
@@ -54,20 +55,11 @@ export function readTextIfExists(filePath: string): string | null {
 
 /** 列出工程里本工具管理的文件（相对工程根），只包含实际存在的 */
 export function listManagedFiles(projectRoot: string): string[] {
-  const vscodeDir = join(projectRoot, '.vscode')
-  const out: string[] = []
-
-  for (const name of MANAGED_VSCODE_FILES) {
-    if (existsSync(join(vscodeDir, name))) out.push(`.vscode/${name}`)
-  }
-  try {
-    for (const entry of readdirSync(vscodeDir)) {
-      if (/^openocd-.*\.cfg$/i.test(entry)) out.push(`.vscode/${entry}`)
-    }
-  } catch {
-    /* 目录不存在就当空 */
-  }
-  return out
+  // 只返回**确认是本工具写的**那些。
+  // 以前这里只判断「文件存在」，于是会把 STM32Cube / CMake Tools 扩展写的
+  // 同名文件也当成自己的 —— 用户点「清除配置」就把别人的配置删了。
+  // 现在按内容特征认（见 vscodeOwnership.ts），认不出来的一律不碰。
+  return inspectVscodeOwnership(projectRoot).ours
 }
 
 /** 删除本工具管理的文件；`.vscode` 因此变空的话一并删掉，尽量回到「从没配置过」的样子 */

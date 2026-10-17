@@ -102,7 +102,13 @@ export default function InspectPage(): React.JSX.Element {
     }
   }
 
-  const present = Object.values(project.vscodeFiles).filter((f) => f.exists)
+  /**
+   * 「本工具写入的」要按**内容特征**认，不能看文件在不在。
+   * STM32Cube / CMake Tools 扩展也会往 .vscode 里写同名文件，
+   * 只看存在性的话，点「清除配置」会把别人的配置删掉。
+   */
+  const present = project.toolWrittenFiles
+  const foreign = project.foreignVscodeFiles
   const cfgFiles = project.openocdCfgFiles.length
 
   return (
@@ -214,6 +220,24 @@ export default function InspectPage(): React.JSX.Element {
               <Badge kind="warn">当前存在 {present.length + cfgFiles} 个本工具写入的配置文件</Badge>
             )}
           </div>
+
+          {/*
+            告诉用户「这几个文件存在，但不是我写的，我不会动」。
+            不写清楚的话，用户会以为清除时漏了文件或者不敢点。
+          */}
+          {foreign.length > 0 && (
+            <Alert kind="info">
+              <div className="bold mb-8">
+                另有 {foreign.length} 个配置文件存在，但<b>不是本工具写的</b>，清除时不会动它们
+              </div>
+              {foreign.map((f) => (
+                <div key={f.path} className="small">
+                  <span className="mono">{f.path}</span>
+                  <span className="faint"> —— {f.why}</span>
+                </div>
+              ))}
+            </Alert>
+          )}
 
           {confirming ? (
             <Alert kind="err">

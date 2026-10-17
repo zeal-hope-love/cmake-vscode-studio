@@ -143,6 +143,10 @@ export interface ProjectInfo {
   toolchainHint: string | null
   vscodeDir: string
   vscodeFiles: Record<string, VscodeFileState>
+  /** **确认是本工具写的** .vscode 文件（按内容特征判断，不是看文件存不存在） */
+  toolWrittenFiles: string[]
+  /** 存在、但看起来是别的扩展写的 —— 清除时不会动它们，这里给理由 */
+  foreignVscodeFiles: Array<{ path: string; why: string }>
   openocdCfgFiles: string[]
   includeDirs: string[]
   defines: string[]

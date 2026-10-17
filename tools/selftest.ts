@@ -30,6 +30,7 @@ import {
   planProjectRename,
   sameName as sameProjectName
 } from '../src/main/services/projectRename'
+import { inspectVscodeOwnership } from '../src/main/services/vscodeOwnership'
 import { detectTools, findSvdFile } from '../src/main/services/toolDetector'
 import { planFiles, writeFiles } from '../src/main/services/writer'
 import {
@@ -1623,6 +1624,87 @@ check(
     existsSync(join(rnRoot, 'old_name.ioc')) &&
     !existsSync(join(rnRoot, 'target-car.ioc')),
   rnBack.errors.join(';')
+)
+
+// ==========================================================================
+// 14. .vscode 文件归属：只有确实是本工具写的才允许删
+//
+// 由来：本工具和 STM32Cube / CMake Tools 扩展都往 .vscode 里写同名文件。
+// 以前「清除配置」只判断文件存在，于是会把别人的配置当自己的删掉 —— 不可逆。
+// ==========================================================================
+
+section('14. .vscode 文件归属：区分本工具写的和别人写的')
+
+const owRoot = join(sandbox, 'ownership')
+const owVscode = join(owRoot, '.vscode')
+mkdirSync(owVscode, { recursive: true })
+
+// 别人写的：settings 只有 cmake.*，c_cpp_properties 用 msvc
+writeFileSync(
+  join(owVscode, 'settings.json'),
+  JSON.stringify({ 'cmake.cmakePath': 'cube-cmake', 'cmake.configureArgs': [] }, null, 4),
+  'utf8'
+)
+writeFileSync(
+  join(owVscode, 'c_cpp_properties.json'),
+  JSON.stringify(
+    {
+      configurations: [
+        {
+          name: 'STM32',
+          compileCommands: '${workspaceFolder}/build/Debug/compile_commands.json',
+          intelliSenseMode: 'windows-msvc-x64'
+        }
+      ],
+      version: 4
+    },
+    null,
+    4
+  ),
+  'utf8'
+)
+// 本工具写的：settings 有 C_Cpp.default.*，c_cpp_properties 用 gcc
+writeFileSync(
+  join(owVscode, 'launch.json'),
+  JSON.stringify(
+    { configurations: [{ name: 'Debug 调试', type: 'cortex-debug', preLaunchTask: '构建 Debug' }] },
+    null,
+    4
+  ),
+  'utf8'
+)
+writeFileSync(
+  join(owVscode, 'tasks.json'),
+  JSON.stringify({ tasks: [{ label: '构建 Debug', type: 'shell' }] }, null, 4),
+  'utf8'
+)
+writeFileSync(
+  join(owVscode, 'openocd-stm32f4x-cmsis-dap.cfg'),
+  'source [find interface/cmsis-dap.cfg]\n',
+  'utf8'
+)
+
+const ow = inspectVscodeOwnership(owRoot)
+check(
+  '归属: 认出本工具写的 launch/tasks/openocd',
+  ['.vscode/launch.json', '.vscode/tasks.json', '.vscode/openocd-stm32f4x-cmsis-dap.cfg'].every((p) =>
+    ow.ours.includes(p)
+  ),
+  ow.ours.join(',')
+)
+check(
+  '归属: 别人写的 settings.json 不算本工具的',
+  !ow.ours.includes('.vscode/settings.json'),
+  ow.all.find((v) => v.path.endsWith('settings.json'))?.why
+)
+check(
+  '归属: 别人写的 c_cpp_properties.json（msvc）不算本工具的',
+  !ow.ours.includes('.vscode/c_cpp_properties.json'),
+  ow.all.find((v) => v.path.endsWith('c_cpp_properties.json'))?.why
+)
+check(
+  '归属: 每个判断都带理由，界面能解释为什么不删',
+  ow.all.every((v) => v.why.length > 0)
 )
 
 // ==========================================================================
