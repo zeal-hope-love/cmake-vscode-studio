@@ -58,8 +58,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `CMake-VSCode-Configurator-1.1.0-x64.exe` | **安装版**，有开始菜单项，可覆盖升级 |
-| `CMake-VSCode-Configurator-1.1.0-portable.exe` | **免安装版**，单文件，双击就跑 |
+| `CMake-VSCode-Configurator-1.2.0-x64.exe` | **安装版**，有开始菜单项，可覆盖升级 |
+| `CMake-VSCode-Configurator-1.2.0-portable.exe` | **免安装版**，单文件，双击就跑 |
 
 两个都是**自包含**的，不需要另装 Node 或 Electron。
 
@@ -88,8 +88,6 @@ npm run dist:installer    # 产出到 release/
 
 ### 工程 · 工程总览
 
-![工程总览](docs/screenshots/01-overview.png)
-
 一页看完三件事：
 
 1. **当前工程** —— 选好之后这栏会折叠成一行，只留工程名和路径，点「换工程」再展开；
@@ -103,7 +101,6 @@ npm run dist:installer    # 产出到 release/
 
 ### 没选工程时：每个页面长得都一样
 
-![统一空状态](docs/screenshots/14-no-project.png)
 
 需要工程的页面（调试 / 任务 / 设置 / IntelliSense / 构建 / 检查）在没选工程时，
 都是 **这一页的标题 + 副标题「还没有选择工程」+ 同一段说明 + 同一组按钮**
@@ -115,7 +112,6 @@ npm run dist:installer    # 产出到 release/
 
 ### 工程 · 调试 launch.json
 
-![调试 launch.json](docs/screenshots/02-launch.png)
 
 生成**一个**调试配置：
 
@@ -139,7 +135,6 @@ npm run dist:installer    # 产出到 release/
 
 ### 工程 · 任务 tasks.json
 
-![任务 tasks.json](docs/screenshots/03-tasks.png)
 
 开箱生成这些任务：
 
@@ -171,14 +166,12 @@ Ninja 在源码没改动时什么都不做 —— 但编译失败时 VSCode 会�
 
 ### 工程 · 设置 settings.json
 
-![设置 settings.json](docs/screenshots/04-settings.png)
 
 按分组列出全部键值，可以增删改。写入的键包括 cortex-debug 的 OpenOCD 路径、CMake Tools 的
 generator / 构建目录等。工具路径可以从「工具与路径」页一键填入。
 
 ### 工程 · IntelliSense
 
-![IntelliSense](docs/screenshots/05-intellisense.png)
 
 `c_cpp_properties.json` 的图形编辑：include 路径、宏定义、编译器路径、C/C++ 标准、IntelliSense 模式。
 这些默认值**从工程的检测结果回填** —— `target_include_directories`、`target_compile_definitions`
@@ -186,14 +179,12 @@ generator / 构建目录等。工具路径可以从「工具与路径」页一�
 
 ### 工程 · 构建与烧录
 
-![构建与烧录](docs/screenshots/06-build.png)
 
 点按钮跑任务，输出实时打在下方的日志里。这一步和 VSCode 里按 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>
 等价，只是在工具里也能跑（方便配置过程中验证）。
 
 ### 源码 · 构建目标与源文件
 
-![构建目标与源文件](docs/screenshots/15-sources.png)
 
 图形化改 `CMakeLists.txt`，解决两个最常见的烦事：**文件漏加了忘了加**、和**别人写的 CMake 看不懂该改哪**。
 
@@ -233,7 +224,6 @@ CMake 的标准做法是**每个目录一个 `CMakeLists.txt`**，由根文件�
 
 ### 源码 · 调试模块
 
-![调试模块](docs/screenshots/16-packs.png)
 
 **模块包**：把一段调试代码装进工程，并把该改的地方一次改对。目前提供两个包。
 
@@ -271,7 +261,6 @@ CMake 的标准做法是**每个目录一个 `CMakeLists.txt`**，由根文件�
 
 ### 模板 · 模板与配置
 
-![模板与配置](docs/screenshots/07-templates.png)
 
 模板 = 一套可复用的配置。可以新建、从当前工程存一份、编辑、复制、看 JSON、删除，也可以批量套用到多个工程。
 
@@ -307,7 +296,6 @@ ${probeLabel}  ${projectRoot}
 
 ### 环境 · 工具与路径
 
-![工具与路径](docs/screenshots/08-tools.png)
 
 自动探测 CMake、Ninja、Arm GNU 工具链、OpenOCD、STM32CubeCLT / CubeMX。**这个页面不需要先载入工程**
 （刚装好、还没选工程时也能先看看环境）。
@@ -322,32 +310,43 @@ ${probeLabel}  ${projectRoot}
 
 ### 工程 · 检查与清理
 
-![检查与清理](docs/screenshots/09-inspect.png)
+写配置之前先体检，**能直接修的会带按钮**。检测项：
 
-列出检测到的问题，**可直接修复**的会带按钮。典型的一条是**陈旧产物**：`build/` 里残留着改名前的
-`老名字.elf`，而 `CMakeLists.txt` 声明的目标名是新的 —— 这种不一致会让烧录烧错文件。
-点「清理 N 个陈旧产物」就能删掉（只删 `.elf/.map/.bin/.hex/.o/.obj/.d/.lst/.su` 这些构建产物，
-且必须落在工程内、必须是已存在的常规文件）。
+| 检查 | 说明 |
+| --- | --- |
+| **工程名不一致** | 目录叫 `target-car`、CMake 里却还是 `standard_robot` → 产物叫 `standard_robot.elf`，而 VSCode 构建分析器按文件夹名找，对不上。可一键改名（先看 diff） |
+| **`cmake.cmakePath` 无效** | 指向不存在的程序（比如 STM32Cube 扩展写的 `cube-cmake`）→ CMake Tools 配不起来，构建分析器拿不到目标，表现为「映射文件数据不可用」 |
+| **陈旧构建产物** | `build/` 里残留改名前的旧产物，会让烧录烧错文件。可一键清理 |
+| **模板变量没替换** | 配置里有没展开的 `${...}` |
+
+#### 清除配置时只删「确实是本工具写的」
+
+本工具和 STM32Cube / CMake Tools 扩展都会往 `.vscode` 里写同名文件。判断能不能删**不看文件存不存在，而看内容特征**：
+
+- `settings.json` —— 有 `C_Cpp.default.*` 键
+- `c_cpp_properties.json` —— 有 `compileCommands` + gcc 的 `intelliSenseMode`（不是 msvc）
+- `launch.json` —— `preLaunchTask` 是「构建 Debug/Release」
+- `tasks.json` —— 任务名对得上（构建 Debug / 烧录 …）
+- `openocd-*.cfg` —— 文件名格式是本工具独有的
+
+认不出来的一律不当自己的，界面上单独列出来并说明理由，**不会删**。宁可少删，不能多删。
 
 下面还有**备份与还原**：每次写入前自动存快照（每工程最多 20 份），可以还原到写入前。
 还原是**真还原** —— 写入时新建的文件会被删掉，而不是留着。
 
 ### 记录 · 历史记录
 
-![历史记录](docs/screenshots/10-history.png)
 
 每次检测工程、写入配置、还原、套模板、跑任务都记一条，带时间和工程。可以直接从记录里
 「重新配置这个工程」「打开这个模板」等。
 
 ### 关于 · 关于与版本
 
-![关于与版本](docs/screenshots/11-about.png)
 
 版本、数据目录、以及首次启动的引导。
 
 ### 写入确认弹窗
 
-![写入确认](docs/screenshots/12-preview.png)
 
 点「写入配置」后先给差异，确认才落盘。弹窗里也会再列一次「写完你在 VSCode 里得到什么」。
 
@@ -412,7 +411,6 @@ ${probeLabel}  ${projectRoot}
 
 **可以直接覆盖升级，用户数据不会丢。**
 
-![安装向导](docs/screenshots/13-installer.png)
 
 | 方式 | 怎么升级 |
 | --- | --- |
@@ -437,7 +435,7 @@ history.json      历史记录
 > 目前**没有做应用内自动更新**（未集成 `electron-updater`），升级需要手动下载新版本。
 > 后续加自动更新时，用的是同一套 NSIS 差分包机制，可以直接覆盖。
 
-**升级到 1.1.0 不需要做任何迁移**：设置、模板、快照、历史记录的格式都没变。
+**升级到 1.2.0 不需要做任何迁移**：设置、模板、快照、历史记录的格式都没变。
 `packs/`（模块包）是新增的，放在**安装目录**里，不在数据目录，所以也不影响你已有的数据。
 
 ---
