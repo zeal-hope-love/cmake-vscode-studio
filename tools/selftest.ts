@@ -1626,6 +1626,74 @@ check(
   rnBack.errors.join(';')
 )
 
+// ---- 改名必须同步更新 .vscode 里已经写进去的 ELF 名 ----
+//
+// 这是一个真实翻过的车：先写了 .vscode（当时 CMake 名是 old_name，所以 launch.json
+// 里是 old_name.elf，当时是对的），后来改名只改了 CMakeLists 和 .ioc，
+// 结果 launch.json / tasks.json 还指向不存在的 old_name.elf —— F5 报找不到文件、
+// 烧录任务也失败，而且看起来像 CMake 的问题，很难查。
+const rn2Root = join(sandbox, 'rename-vscode')
+mkdirSync(join(rn2Root, '.vscode'), { recursive: true })
+writeFileSync(
+  join(rn2Root, 'CMakeLists.txt'),
+  'set(CMAKE_PROJECT_NAME old_name)\nproject(${CMAKE_PROJECT_NAME})\nadd_executable(${CMAKE_PROJECT_NAME})\n',
+  'utf8'
+)
+writeFileSync(
+  join(rn2Root, '.vscode', 'launch.json'),
+  JSON.stringify(
+    {
+      version: '0.2.0',
+      configurations: [
+        {
+          name: 'Debug',
+          type: 'cortex-debug',
+          executable: '${workspaceFolder}/build/Debug/old_name.elf',
+          preLaunchTask: '构建 Debug'
+        }
+      ]
+    },
+    null,
+    4
+  ),
+  'utf8'
+)
+writeFileSync(
+  join(rn2Root, '.vscode', 'tasks.json'),
+  JSON.stringify(
+    {
+      version: '2.0.0',
+      tasks: [
+        {
+          label: '烧录',
+          type: 'shell',
+          args: ['program {${workspaceFolder}/build/Debug/old_name.elf} verify reset exit']
+        }
+      ]
+    },
+    null,
+    4
+  ),
+  'utf8'
+)
+
+const rn2Plan = planProjectRename(rn2Root, 'new-name', false)
+check(
+  '改名: 计划里包含 .vscode/launch.json 和 tasks.json 的更新',
+  rn2Plan.changes.some((c) => c.path === '.vscode/launch.json' && c.action === 'patch') &&
+    rn2Plan.changes.some((c) => c.path === '.vscode/tasks.json' && c.action === 'patch'),
+  rn2Plan.changes.map((c) => `${c.action}:${c.path}`).join(' ')
+)
+const rn2Apply = applyProjectRename(rn2Plan)
+check('改名: .vscode 更新写入成功', rn2Apply.ok, rn2Apply.errors.join(';'))
+check(
+  '改名: launch.json / tasks.json 里不再有旧 ELF 名',
+  !readFileSync(join(rn2Root, '.vscode', 'launch.json'), 'utf8').includes('old_name.elf') &&
+    !readFileSync(join(rn2Root, '.vscode', 'tasks.json'), 'utf8').includes('old_name.elf') &&
+    readFileSync(join(rn2Root, '.vscode', 'launch.json'), 'utf8').includes('new-name.elf') &&
+    readFileSync(join(rn2Root, '.vscode', 'tasks.json'), 'utf8').includes('new-name.elf')
+)
+
 // ==========================================================================
 // 14. .vscode 文件归属：只有确实是本工具写的才允许删
 //

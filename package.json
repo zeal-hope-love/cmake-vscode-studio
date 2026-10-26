@@ -1,7 +1,7 @@
 {
   "name": "cmake-vscode-studio",
   "productName": "CMake-VSCode-Configurator",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "CMake / VSCode 工程配置器 —— 检测 CMake 工程并图形化生成、修改 .vscode 配置",
   "main": "./out/main/index.js",
   "author": "PoXia",

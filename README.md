@@ -58,8 +58,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `CMake-VSCode-Configurator-1.2.0-x64.exe` | **安装版**，有开始菜单项，可覆盖升级 |
-| `CMake-VSCode-Configurator-1.2.0-portable.exe` | **免安装版**，单文件，双击就跑 |
+| `CMake-VSCode-Configurator-1.2.1-x64.exe` | **安装版**，有开始菜单项，可覆盖升级 |
+| `CMake-VSCode-Configurator-1.2.1-portable.exe` | **免安装版**，单文件，双击就跑 |
 
 两个都是**自包含**的，不需要另装 Node 或 Electron。
 
@@ -314,7 +314,7 @@ ${probeLabel}  ${projectRoot}
 
 | 检查 | 说明 |
 | --- | --- |
-| **工程名不一致** | 目录叫 `target-car`、CMake 里却还是 `standard_robot` → 产物叫 `standard_robot.elf`，而 VSCode 构建分析器按文件夹名找，对不上。可一键改名（先看 diff） |
+| **工程名不一致** | 目录叫 `target-car`、CMake 里却还是 `standard_robot` → 产物叫 `standard_robot.elf`，而 VSCode 构建分析器按文件夹名找，对不上。可一键改名（先看 diff），**会连带更新已生成的 `.vscode` 里引用的 ELF 名** |
 | **`cmake.cmakePath` 无效** | 指向不存在的程序（比如 STM32Cube 扩展写的 `cube-cmake`）→ CMake Tools 配不起来，构建分析器拿不到目标，表现为「映射文件数据不可用」 |
 | **陈旧构建产物** | `build/` 里残留改名前的旧产物，会让烧录烧错文件。可一键清理 |
 | **模板变量没替换** | 配置里有没展开的 `${...}` |
@@ -435,7 +435,7 @@ history.json      历史记录
 > 目前**没有做应用内自动更新**（未集成 `electron-updater`），升级需要手动下载新版本。
 > 后续加自动更新时，用的是同一套 NSIS 差分包机制，可以直接覆盖。
 
-**升级到 1.2.0 不需要做任何迁移**：设置、模板、快照、历史记录的格式都没变。
+**升级到 1.2.1 不需要做任何迁移**：设置、模板、快照、历史记录的格式都没变。
 `packs/`（模块包）是新增的，放在**安装目录**里，不在数据目录，所以也不影响你已有的数据。
 
 ---

@@ -18,8 +18,9 @@
  */
 
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, posix } from 'node:path'
+import { join, posix, sep } from 'node:path'
 import type { RenamePlan, RenameFileChange } from '@shared/types'
+import { inspectVscodeOwnership } from './vscodeOwnership'
 import { captureSnapshot } from './snapshotStore'
 import { recordWrite } from './historyStore'
 
@@ -102,6 +103,53 @@ export function planProjectRename(root: string, newName: string, withIoc = true)
     note: `把 ${cur.kind} 里的 ${cur.name} 改成 ${newName}（${touched} 处）`
   })
 
+  // ---- .vscode 里已经写进去的 ELF 名 ----
+  //
+  // 这一步是补一个真实的坑：改名之前工具可能已经生成过 .vscode 配置，
+  // 里面写着 `build/Debug/<旧名>.elf`（当时是对的）。改名后那个文件就不存在了，
+  // 于是 F5 报「找不到 elf」、烧录任务也会失败 —— 用户会以为是 CMake 的问题。
+  //
+  // 只改**本工具写的**那些文件；别人的配置不碰，但要在说明里点出来让他自己处理。
+  const ownership = inspectVscodeOwnership(root)
+  let patchedVscode = 0
+  for (const rel of ownership.ours) {
+    const abs = join(root, rel.split('/').join(sep))
+    if (!existsSync(abs)) continue
+    const vBefore = readFileSync(abs, 'utf8')
+    let vAfter = vBefore
+    for (const ext of ['elf', 'hex', 'bin', 'map']) {
+      vAfter = vAfter.split(`${cur.name}.${ext}`).join(`${newName}.${ext}`)
+    }
+    if (vAfter === vBefore) continue
+    patchedVscode += 1
+    changes.push({
+      path: rel,
+      action: 'patch',
+      before: vBefore,
+      after: vAfter,
+      note: `把里面引用的 ${cur.name}.elf/.hex/.bin 改成 ${newName}.*`
+    })
+  }
+
+  // 别人的 .vscode 配置里如果还留着旧名，工具不能改，但必须告诉他
+  const foreignStale = ownership.all
+    .filter((v) => !v.ours)
+    .filter((v) => {
+      const abs = join(root, v.path.split('/').join(sep))
+      if (!existsSync(abs)) return false
+      try {
+        return readFileSync(abs, 'utf8').includes(`${cur.name}.elf`)
+      } catch {
+        return false
+      }
+    })
+    .map((v) => v.path)
+  for (const p of foreignStale) {
+    notes.push(
+      `注意：${p} 不是本工具写的，里面还引用了 ${cur.name}.elf —— 工具不会改别人的文件，请手动更新`
+    )
+  }
+
   // ---- .ioc：文件名 + 内部 ProjectName ----
   const iocs = readdirSync(root).filter((f) => /\.ioc$/i.test(f))
   if (withIoc && iocs.length === 1) {
@@ -142,6 +190,12 @@ export function planProjectRename(root: string, newName: string, withIoc = true)
   notes.push(
     `构建产物会从 ${cur.name}.elf/.hex/.bin 变成 ${newName}.elf/.hex/.bin —— 建议清理 build 目录后重新构建`
   )
+  if (patchedVscode > 0) {
+    notes.push(
+      `已经生成的 .vscode 配置里有 ${patchedVscode} 个引用了旧 ELF 名，会一起改掉` +
+        `（不改的话 F5 和烧录任务会因为找不到 <旧名>.elf 而失败）`
+    )
+  }
   notes.push('MDK-ARM/ 里的 Keil 工程不改（那是另一个构建系统的残留，改名没意义）')
 
   return {
