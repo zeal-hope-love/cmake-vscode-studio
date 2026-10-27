@@ -116,7 +116,11 @@ export function defaultGenOptions(
     includeDirs: project.includeDirs.length ? project.includeDirs : ['.'],
     defines: project.defines,
     cStandard: 'c11',
-    cppStandard: 'c++17'
+    cppStandard: 'c++17',
+    // Live Watch 是「用户习惯」，从设置里带过来 —— 开一次之后新工程也默认开
+    liveWatch: settings.liveWatch ?? false,
+    liveWatchSamplesPerSecond: settings.liveWatchSamplesPerSecond ?? 4,
+    liveWatchRefreshRate: settings.liveWatchRefreshRate ?? 300
   }
 }
 
@@ -175,6 +179,23 @@ function embeddedConfigs(project: ProjectInfo, o: GenOptions, probe: ProbeOption
   }
   if (o.toolchainDir) {
     extra.armToolchainPath = toPosix(o.toolchainDir)
+  }
+
+  /**
+   * Live Watch —— 不停机看全局变量（类似 Keil 的 Live Watch）。
+   *
+   * 只对 openocd / stlink / jlink 三种 gdb-server 有效（cortex-debug 1.12 的
+   * CHANGELOG 明确列了这三个；schema 描述里那句 "Only applies to OpenOCD" 是旧文案）。
+   * PyOCD 不支持，所以这里按 servertype 过滤，别给不支持的探针塞一个没用的字段。
+   *
+   * 注意 samplesPerSecond 和界面刷新率是**两回事**：
+   *   · samplesPerSecond   每秒采样几次，cortex-debug 限制 0~20
+   *   · liveWatchRefreshRate（写在 settings.json 里）面板多久重画一次，默认 300ms
+   * 采样快但刷新慢，看起来就是「值跳着变」——这是正常的。
+   */
+  if (o.liveWatch && ['openocd', 'stlink', 'jlink'].includes(probe.servertype)) {
+    const sps = Math.max(0, Math.min(20, Math.round(o.liveWatchSamplesPerSecond ?? 4)))
+    extra.liveWatch = { enabled: true, samplesPerSecond: sps }
   }
 
   // name / type / request 放最前面，生成出来的 JSON 更好读。
@@ -449,6 +470,12 @@ export function generateSettings(project: ProjectInfo, o: GenOptions): SettingsF
   if (o.toolchainDir) {
     settings['cortex-debug.armToolchainPath.windows'] = toPosix(o.toolchainDir)
     settings['cortex-debug.armToolchainPath'] = toPosix(o.toolchainDir)
+  }
+  // Live Watch 面板的重画频率（毫秒）。这是**用户/工作区设置**，不在 launch.json 里。
+  // cortex-debug 官方要求别低于 250ms，否则 VSCode 的 UI 跟不上、看着像卡死。
+  if (o.liveWatch) {
+    const rate = Math.max(100, Math.min(5000, Math.round(o.liveWatchRefreshRate ?? 300)))
+    settings['cortex-debug.liveWatchRefreshRate'] = rate
   }
 
   settings['cmake.configureOnOpen'] = false

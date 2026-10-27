@@ -562,6 +562,83 @@ export default function ToolsPage(): React.JSX.Element {
             />
           </Field>
 
+          {/*
+            Live Watch —— 不停机看全局变量（类似 Keil 的 Live Watch）。
+            cortex-debug 1.12 起提供，只对 openocd / stlink / jlink 生效，PyOCD 不支持；
+            官方标注「实验性」，且只测过 SWD。
+          */}
+          <Field
+            label="Live Watch（不停机看全局变量）"
+            hint="写进 launch.json 的 liveWatch，以及 settings.json 的 cortex-debug.liveWatchRefreshRate"
+          >
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                padding: '8px 10px',
+                border: '1px solid var(--border)',
+                borderRadius: 6
+              }}
+            >
+              <Checkbox
+                checked={Boolean(options.liveWatch)}
+                onChange={(on) => {
+                  patchOptions({ liveWatch: on })
+                  void window.api.saveSettings({ liveWatch: on })
+                }}
+                label={
+                  options.liveWatch
+                    ? '已启用 —— F5 起来后在 Live Watch 面板里「Add to Live Watch」加变量'
+                    : '未启用'
+                }
+              />
+
+              {options.liveWatch && (
+                <div className="row" style={{ alignItems: 'flex-end' }}>
+                  <div style={{ width: 150 }}>
+                    <Field label="采样率（次/秒）" hint="0~20，默认 4">
+                      <TextInput
+                        type="number"
+                        min={0}
+                        max={20}
+                        value={String(options.liveWatchSamplesPerSecond)}
+                        onChange={(e) => {
+                          const v = Math.max(0, Math.min(20, Number(e.target.value) || 0))
+                          patchOptions({ liveWatchSamplesPerSecond: v })
+                          void window.api.saveSettings({ liveWatchSamplesPerSecond: v })
+                        }}
+                      />
+                    </Field>
+                  </div>
+                  <div style={{ width: 170 }}>
+                    <Field label="面板刷新（毫秒）" hint="默认 300，别低于 250">
+                      <TextInput
+                        type="number"
+                        min={100}
+                        max={5000}
+                        value={String(options.liveWatchRefreshRate)}
+                        onChange={(e) => {
+                          const v = Math.max(100, Math.min(5000, Number(e.target.value) || 300))
+                          patchOptions({ liveWatchRefreshRate: v })
+                          void window.api.saveSettings({ liveWatchRefreshRate: v })
+                        }}
+                      />
+                    </Field>
+                  </div>
+                </div>
+              )}
+
+              <div className="faint small" style={{ lineHeight: 1.7 }}>
+                {!['openocd', 'stlink', 'jlink'].includes(probeByKey(options.probeKey).servertype)
+                  ? `当前探针（${probeByKey(options.probeKey).label}）用的是 ${probeByKey(options.probeKey).servertype}，cortex-debug 的 Live Watch 不支持它 —— 打开也不会生效。`
+                  : '注意：只能看**全局变量和静态变量**（cortex-debug 靠 nm/objdump 读符号表，栈上的局部变量看不到，会显示 not available）。'}
+                <br />
+                采样率和面板刷新是两回事：采样快但刷新慢，看起来就是「值跳着变」，这是正常的。
+              </div>
+            </div>
+          </Field>
+
           <Kv
             items={[
               [

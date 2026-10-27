@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DEFAULT_SETTINGS, type AppSettings } from '@shared/types'
-import { defaultGenOptions, generateBundle } from '../src/main/services/generators'
+import { defaultGenOptions, generateBundle, generateLaunch } from '../src/main/services/generators'
 import { scanProject } from '../src/main/services/scanner'
 import {
   buildCmakeModel,
@@ -1773,6 +1773,50 @@ check(
 check(
   '归属: 每个判断都带理由，界面能解释为什么不删',
   ow.all.every((v) => v.why.length > 0)
+)
+
+// ==========================================================================
+// 15. Live Watch：不停机看全局变量
+//
+// cortex-debug 1.12 起提供，靠 launch.json 的 liveWatch 打开；
+// 只对 openocd / stlink / jlink 生效（PyOCD 不支持，塞进去是无效字段）。
+// ==========================================================================
+
+section('15. Live Watch 生成')
+
+// 合成工程本身没有 .ioc / 设备，会被判成「非嵌入式」→ 生成 cppdbg 配置，
+// 而 Live Watch 只存在于 cortex-debug 的嵌入式配置里。
+// generateLaunch 的条件是 `project.isEmbedded && o.device`，所以两个都要给足。
+const lwProject = { ...scanProject(join(sandbox, 'pack-proj'), false), isEmbedded: true }
+const lwBase = {
+  ...defaultGenOptions(lwProject, detectTools({}), DEFAULT_SETTINGS),
+  device: 'STM32F407IGH6'
+}
+const lwOf = (o: Record<string, unknown>): unknown => {
+  const cfg = generateLaunch(lwProject, { ...lwBase, ...(o as object) } as typeof lwBase)
+  return (cfg.configurations[0] as Record<string, unknown>).liveWatch
+}
+
+check('LiveWatch: 关闭时不写这个字段', lwOf({ liveWatch: false }) === undefined)
+check(
+  'LiveWatch: 打开后是 {enabled:true, samplesPerSecond:4}',
+  JSON.stringify(lwOf({ liveWatch: true, liveWatchSamplesPerSecond: 4 })) ===
+    '{"enabled":true,"samplesPerSecond":4}',
+  JSON.stringify(lwOf({ liveWatch: true, liveWatchSamplesPerSecond: 4 }))
+)
+check(
+  'LiveWatch: 采样率超上限 20 会被夹住',
+  (lwOf({ liveWatch: true, liveWatchSamplesPerSecond: 50 }) as { samplesPerSecond: number } | undefined)
+    ?.samplesPerSecond === 20
+)
+check(
+  'LiveWatch: 负数采样率被夹到 0',
+  (lwOf({ liveWatch: true, liveWatchSamplesPerSecond: -5 }) as { samplesPerSecond: number } | undefined)
+    ?.samplesPerSecond === 0
+)
+check(
+  'LiveWatch: PyOCD 探针不支持，不写这个字段',
+  lwOf({ liveWatch: true, probeKey: 'pyocd' }) === undefined
 )
 
 // ==========================================================================

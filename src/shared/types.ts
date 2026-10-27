@@ -329,6 +329,15 @@ export interface GenOptions {
   defines: string[]
   cStandard: string
   cppStandard: string
+  /**
+   * Live Watch —— 不停机看全局变量（cortex-debug 的实验性功能，类似 Keil 的 Live Watch）。
+   * 只对 openocd / stlink / jlink 三种 gdb-server 生效，PyOCD 不支持。
+   */
+  liveWatch: boolean
+  /** 每秒采样几次（cortex-debug 限制 0~20，默认 4） */
+  liveWatchSamplesPerSecond: number
+  /** 面板重画间隔（毫秒），写进 settings.json 的 cortex-debug.liveWatchRefreshRate */
+  liveWatchRefreshRate: number
 }
 
 // ==========================================================================
@@ -605,6 +614,13 @@ export interface AppSettings {
   onboardingDone: boolean
   /** 界面上可拖动区域的宽度：'nav' / 'split' 等 → 像素 */
   uiWidths: Record<string, number>
+  /**
+   * Live Watch 的默认值（跨工程记忆）。
+   * 这是「用户习惯」而不是「工程属性」，所以放设置里 —— 开一次之后新工程也默认开。
+   */
+  liveWatch: boolean
+  liveWatchSamplesPerSecond: number
+  liveWatchRefreshRate: number
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -618,7 +634,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   backupBeforeWrite: false,
   autoDetectOnStart: true,
   onboardingDone: false,
-  uiWidths: {}
+  uiWidths: {},
+  liveWatch: false,
+  liveWatchSamplesPerSecond: 4,
+  liveWatchRefreshRate: 300
 }
 
 // ==========================================================================

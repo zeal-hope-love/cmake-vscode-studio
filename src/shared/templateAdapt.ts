@@ -50,6 +50,10 @@ export function adaptTemplateOptions(template: Partial<GenOptions>, base: GenOpt
     svdFile: template.svdFile || '',
     cStandard: template.cStandard || base.cStandard,
     cppStandard: template.cppStandard || base.cppStandard,
-    generator: template.generator || base.generator
+    generator: template.generator || base.generator,
+    // Live Watch：模板里写了就用模板的，没写就跟随目标工程（也就是用户设置）
+    liveWatch: template.liveWatch ?? base.liveWatch,
+    liveWatchSamplesPerSecond: template.liveWatchSamplesPerSecond ?? base.liveWatchSamplesPerSecond,
+    liveWatchRefreshRate: template.liveWatchRefreshRate ?? base.liveWatchRefreshRate
   }
 }

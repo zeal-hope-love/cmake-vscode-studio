@@ -43,6 +43,7 @@
 - **模板系统** —— 把一套配置存成模板，跨工程复用；内置占位符（`${elfName}`、`${device}`…）
 - **多工程批量套用** —— 一次把模板套到多个工程
 - **工具与探针探测** —— 自动找 CMake / Ninja / Arm GNU 工具链 / OpenOCD / CubeCLT，环境变量优先
+- **Live Watch** —— 不停机看全局变量（cortex-debug 实验性功能，类似 Keil 的 Live Watch），可设采样率与刷新率
 - **一键构建 / 烧录 + 实时日志**
 - **历史记录** —— 每次检测、写入、还原都留痕，可一键重做
 - **快照与真还原** —— 每次写入前自动快照，可还原到写入前的样子（连"当时不存在的文件"也一并删掉）
@@ -58,8 +59,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `CMake-VSCode-Configurator-1.2.1-x64.exe` | **安装版**，有开始菜单项，可覆盖升级 |
-| `CMake-VSCode-Configurator-1.2.1-portable.exe` | **免安装版**，单文件，双击就跑 |
+| `CMake-VSCode-Configurator-1.3.0-x64.exe` | **安装版**，有开始菜单项，可覆盖升级 |
+| `CMake-VSCode-Configurator-1.3.0-portable.exe` | **免安装版**，单文件，双击就跑 |
 
 两个都是**自包含**的，不需要另装 Node 或 Electron。
 
@@ -308,6 +309,25 @@ ${probeLabel}  ${projectRoot}
 4. 系统 `PATH`
 5. 常见安装位置
 
+#### Live Watch（不停机看变量）
+
+在「调试探针与目标」里有个开关，打开后会写两处：
+
+| 写在哪 | 内容 |
+| --- | --- |
+| `launch.json` | `"liveWatch": { "enabled": true, "samplesPerSecond": 4 }` |
+| `settings.json` | `"cortex-debug.liveWatchRefreshRate": 300`（面板重画间隔，毫秒） |
+
+几个必须知道的点：
+
+- **只对 `openocd` / `stlink` / `jlink` 三种 gdb-server 生效**，PyOCD 不支持（工具会按探针自动跳过，不会写一个无效字段）
+- **只能看全局变量和静态变量** —— cortex-debug 靠 `nm` / `objdump` 读符号表，栈上的局部变量永远显示 *not available*。这是最常见的「配了却不工作」
+- **采样率和面板刷新是两回事**：`samplesPerSecond` 是每秒读几次（0~20，默认 4），`liveWatchRefreshRate` 是面板多久重画一次（默认 300ms，官方建议别低于 250ms）。采样快刷新慢，看起来就是「值跳着变」，属正常
+- 官方标注**实验性**，且只测过 SWD（不是 JTAG）
+- 需要一个正在运行的 cortex-debug 调试会话（Live Watch 面板本身不连硬件，它从会话里读数据）
+
+> 另有一个第三方扩展 `misaka21.arm-livewatch`，那是**另一条路**：走 OpenOCD 的 TCL 端口直接读内存，不需要 launch.json 任何配置，也不依赖调试会话。两者别混。
+
 ### 工程 · 检查与清理
 
 写配置之前先体检，**能直接修的会带按钮**。检测项：
@@ -435,7 +455,7 @@ history.json      历史记录
 > 目前**没有做应用内自动更新**（未集成 `electron-updater`），升级需要手动下载新版本。
 > 后续加自动更新时，用的是同一套 NSIS 差分包机制，可以直接覆盖。
 
-**升级到 1.2.1 不需要做任何迁移**：设置、模板、快照、历史记录的格式都没变。
+**升级到 1.3.0 不需要做任何迁移**：设置、模板、快照、历史记录的格式都没变。
 `packs/`（模块包）是新增的，放在**安装目录**里，不在数据目录，所以也不影响你已有的数据。
 
 ---
