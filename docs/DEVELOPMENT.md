@@ -573,3 +573,37 @@ node -e "const b=require('fs').readFileSync('release/win-unpacked/resources/app.
 - **用什么**：VS Code + electron-vite + React。Electron 没有专用 IDE，前端工具链就是它的工具链。
 - **怎么调**：界面按 F12；主进程 `npm run dev:inspect` + VS Code attach 5858；业务逻辑用 `npm run selftest` 无头跑。
 - **怎么签**：个人/小团队上 **Azure Trusted Signing**（约 $10/月，不到买证书的零头）；要立即不弹警告就买 **EV 证书**（硬件令牌，贵）；千万别想着往 CI 里塞 `.pfx` —— 2023 年之后这条路在正规 CA 那里已经堵死了。
+
+
+---
+
+## 不要在沙箱工作区里直接运行安装包
+
+**症状**（会让人误以为安装包坏了）：
+
+- `CMake-VSCode-Configurator 无法关闭。请手动关闭它` —— 明明没开应用
+- `不能打开要写入的文件: ...\\uninstallerIcon.ico`
+- `NSIS Error: Error writing temporary file. Make sure your temp folder is valid`
+- 或者双击后毫无反应，进程起不来
+
+**原因**：如果项目目录在 DSH / 之类沙箱工具的工作区里，工作区目录会被加上
+`Everyone: 拒绝删除子目录和文件` 这类 ACL，而且这些工具通常还会：
+
+- 把 `TEMP` 指向工作区内的会话临时目录（NSIS 写不了临时文件）
+- 阻止进程写 `%APPDATA%`（Electron 起不来，连缓存都建不了）
+
+NSIS 自解压（安装版 / portable）在这种环境里就会报上面那一串错。
+
+**验证方法**：把 exe 复制到**工作区之外**的普通目录（例如桌面）再双击，一切正常。
+
+**所以：**
+
+```powershell
+npm run dist:installer   # 打包
+npm run dist:copy        # 复制到 %USERPROFILE%\Desktop\CMakeVSCodeConfigurator-release
+```
+
+从那个目录运行/交付。**不要**在工作区里直接双击。
+
+> 这个坑我踩过整整一轮：所有「安装器修不好」的结论都是在工作区里跑出来的假象，
+> 安装包本身一点问题都没有。

@@ -25,7 +25,8 @@
     "version:patch": "npm version --no-git-tag-version patch",
     "version:minor": "npm version --no-git-tag-version minor",
     "version:major": "npm version --no-git-tag-version major",
-    "postinstall": "node tools/ensure-electron.mjs"
+    "postinstall": "node tools/ensure-electron.mjs",
+    "dist:copy": "node tools/copy-release.mjs"
   },
   "dependencies": {
     "zustand": "^5.0.15"
