@@ -1819,6 +1819,15 @@ check(
   lwOf({ liveWatch: true, probeKey: 'pyocd' }) === undefined
 )
 
+// 默认值 —— 用户要求默认开启。这两个断言防止以后有人手滑改回 false。
+check('LiveWatch: 默认设置里是开启的', DEFAULT_SETTINGS.liveWatch === true)
+check(
+  'LiveWatch: 设置缺字段时按开启处理（老 settings.json 兼容）',
+  JSON.stringify(lwOf({} as Record<string, unknown>)) ===
+    '{"enabled":true,"samplesPerSecond":4}',
+  'defaultGenOptions 没有把默认值带进来'
+)
+
 // ==========================================================================
 // 汇总
 // ==========================================================================

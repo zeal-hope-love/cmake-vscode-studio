@@ -616,7 +616,11 @@ export interface AppSettings {
   uiWidths: Record<string, number>
   /**
    * Live Watch 的默认值（跨工程记忆）。
-   * 这是「用户习惯」而不是「工程属性」，所以放设置里 —— 开一次之后新工程也默认开。
+   * 这是「用户习惯」而不是「工程属性」，所以放设置里。
+   *
+   * **默认开启** —— 用户要求默认开。代价很小（launch.json 里多一个对象、
+   * 调试时每秒读几次变量），收益是不用每次新工程都去点一下开关。
+   * 探针不是 openocd/stlink/jlink 时会自动跳过，不会写出无效字段。
    */
   liveWatch: boolean
   liveWatchSamplesPerSecond: number
@@ -635,7 +639,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoDetectOnStart: true,
   onboardingDone: false,
   uiWidths: {},
-  liveWatch: false,
+  // Live Watch 默认开启（用户要求）：新装即生效，不用每次手动勾
+  liveWatch: true,
   liveWatchSamplesPerSecond: 4,
   liveWatchRefreshRate: 300
 }

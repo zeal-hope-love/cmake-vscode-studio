@@ -117,8 +117,9 @@ export function defaultGenOptions(
     defines: project.defines,
     cStandard: 'c11',
     cppStandard: 'c++17',
-    // Live Watch 是「用户习惯」，从设置里带过来 —— 开一次之后新工程也默认开
-    liveWatch: settings.liveWatch ?? false,
+    // Live Watch 是「用户习惯」，从设置里带过来；设置缺失时按默认「开启」处理，
+    // 和 DEFAULT_SETTINGS 保持一致（老版本 settings.json 里没有这几个字段）
+    liveWatch: settings.liveWatch ?? true,
     liveWatchSamplesPerSecond: settings.liveWatchSamplesPerSecond ?? 4,
     liveWatchRefreshRate: settings.liveWatchRefreshRate ?? 300
   }
