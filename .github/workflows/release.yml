@@ -1,0 +1,184 @@
+# 构建 + 代码签名 + 发布
+#
+# 为什么构建要在 CI 里做：SignPath Foundation（开源项目免费 EV 签名）要求
+# **所有构建步骤都在 GitHub 托管的 runner 上执行** —— 这是它验证「二进制确实
+# 来自这个仓库」的方式。本地打包后上传会被拒绝签名。
+#
+# 签名的开启方式是「配了变量就签，没配就跳」：
+#   · 没配 SIGNPATH_PROJECT_SLUG → 只构建，产出未签名安装包（CI 照样绿）
+#   · 配了 → 多一步把未签名包交给 SignPath 签，签完替代未签名包
+# 具体要配哪些 secret / variable，见 docs/CODE_SIGNING.md
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version_suffix:
+        description: '附加到产物名末尾（可选），例如 -test1'
+        required: false
+        default: ''
+
+# 需要读仓库内容；用 GITHUB_TOKEN 创建/更新 Release
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 构建 / 自检 / 打包
+    runs-on: windows-latest
+    outputs:
+      # 打包出来的安装器是否已签名（后面决定要不要额外上传）
+      signed: ${{ vars.SIGNPATH_PROJECT_SLUG != '' }}
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      # 自检不依赖 Electron，跑在纯 Node 里；失败就不必打包了
+      - name: 自检（206 项）
+        run: npm run selftest
+
+      - name: 类型检查（主进程 + 渲染进程）
+        run: |
+          npx tsc --noEmit -p tsconfig.node.json
+          npx tsc --noEmit -p tsconfig.web.json
+
+      # electron-builder 要下 Electron 二进制；CI 里走默认源即可
+      - name: 打包（NSIS + portable）
+        run: npm run dist:installer
+        env:
+          # 未配置证书时不签名，避免 electron-builder 去找不存在的证书
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: 清掉 nsis 中间产物
+        shell: bash
+        run: rm -f release/*.nsis.7z
+
+      - name: 列出产物
+        shell: bash
+        run: ls -la release/
+
+      # upload-artifact 默认把内容打成 ZIP → SignPath 的 Artifact Configuration
+      # 根元素要用 <zip-file>。见 docs/CODE_SIGNING.md
+      - name: 上传未签名产物
+        id: upload-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installers
+          path: |
+            release/*.exe
+            release/latest.yml
+            release/*.blockmap
+          if-no-files-found: error
+
+  sign:
+    name: 签名（SignPath）
+    needs: build
+    if: vars.SIGNPATH_PROJECT_SLUG != ''
+    runs-on: windows-latest
+    steps:
+      - name: 检出（SignPath 需要同一仓库上下文）
+        uses: actions/checkout@v4
+
+      - name: 下载未签名产物
+        uses: actions/download-artifact@v4
+        with:
+          name: unsigned-installers
+          path: unsigned
+
+      # 先重新打成一个干净的 ZIP 再上传，保证 zip 内只有 exe —— 和
+      # Artifact Configuration 里的 <zip-file> 根元素严格对应
+      - name: 打包待签文件
+        shell: bash
+        run: |
+          mkdir -p to-sign
+          cp unsigned/*.exe to-sign/
+          ls -la to-sign/
+
+      - name: 上传待签文件
+        id: upload-to-sign
+        uses: actions/upload-artifact@v4
+        with:
+          name: to-sign
+          path: to-sign/*.exe
+          if-no-files-found: error
+
+      - name: 提交签名请求
+        uses: signpath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-to-sign.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: 检查签名结果
+        shell: pwsh
+        run: |
+          Get-ChildItem signed -Recurse -Filter *.exe | ForEach-Object {
+            $sig = Get-AuthenticodeSignature $_.FullName
+            Write-Host ("{0} -> {1}" -f $_.Name, $sig.Status)
+            if ($sig.Status -ne 'Valid') { throw ("签名无效: " + $_.Name) }
+          }
+
+      - name: 上传已签名产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-installers
+          path: |
+            signed/**/*.exe
+            unsigned/latest.yml
+            unsigned/*.blockmap
+          if-no-files-found: error
+
+  release:
+    name: 附加到 GitHub Release
+    needs: [build, sign]
+    # 只在推标签时发布；手动触发只留 artifact
+    if: startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_PROJECT_SLUG != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载已签名产物
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-installers
+          path: dist
+
+      - name: 展示内容
+        run: find dist -type f | head -20
+
+      # 用 gh 附加到由标签触发的 Release；Release 不存在就先建草稿
+      - name: 附加产物
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，追加产物"
+          else
+            echo "Release $TAG 不存在，创建草稿"
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft \
+              --title "$TAG" --notes "由 CI 构建并签名。"
+          fi
+          find dist -type f \( -name '*.exe' -o -name 'latest.yml' -o -name '*.blockmap' \) \
+            -exec gh release upload "$TAG" {} --repo "$GITHUB_REPOSITORY" --clobber \;

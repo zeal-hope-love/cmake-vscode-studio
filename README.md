@@ -550,6 +550,15 @@ cmake-vscode-studio/
 
 ---
 
+## 代码签名
+
+Windows 上未签名的安装包会被 SmartScreen 拦（「发行者：发布者未知」）。
+本项目计划通过 [SignPath Foundation](https://signpath.org/) 免费为开源项目做 EV 签名 ——
+原因、申请步骤、CI 集成方式见 **[docs/CODE_SIGNING.md](docs/CODE_SIGNING.md)**。
+
+> 签名版的构建必须跑在 GitHub Actions 上（SignPath 用来验证二进制确实来自本仓库），
+> 见 [.github/workflows/release.yml](.github/workflows/release.yml)。
+
 ## 开发
 
 ```powershell
