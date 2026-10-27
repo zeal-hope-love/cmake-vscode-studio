@@ -79,6 +79,8 @@ win:
   # forceCodeSigning: true
 
 nsis:
+  # 安装前强杀正在运行的旧版本（见 resources/installer.nsh）
+  include: resources/installer.nsh
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
