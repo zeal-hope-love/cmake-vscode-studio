@@ -11,7 +11,7 @@
  *   7. 用生成的 OpenOCD 接线配置真的启动一次 openocd
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { buildTemplateFile, parseTemplateFile, TEMPLATE_FORMAT_DOC, isBuiltinPresetId } from '../src/shared/templateFormat'
 import { listBuiltinPackPresets } from '../src/main/services/packPresetStore'
 import {
@@ -2091,10 +2091,36 @@ const samplePreset = {
     )
   }
 
-  // 恢复正常配置，免得影响后面的用例
+  // 恢复配置，免得影响后面的用例
   configureSnapshots(join(fbRoot, 'normal'))
   const r2 = captureSnapshotDetailed(fbRoot, [{ relativePath: 'b.c', previous: 'x' }])
   check('快照降级: 主目录可用时走主路径', r2.id !== null && r2.usedFallback === false)
+
+  /*
+   * 降级位置不止一个：实测有的环境连**工程目录**都写不进去
+   * （mkdir 就 EPERM），所以要往后继续退 —— 工程上一级、临时目录。
+   * 这里检查「读取侧」也覆盖了同样的几个位置，否则会出现
+   * 「存进去了但列表看不到」。
+   */
+  const fb2 = join(tmpdir(), `cv-fallback2-${Date.now()}`)
+  const proj2 = join(fb2, 'proj')
+  mkdirSync(proj2, { recursive: true })
+
+  // 主位置和工程目录都不可写 → 应该退到「工程上一级」
+  configureSnapshots('Z:\\no-such\\snapshots')
+  chmodSync(proj2, 0o555) // 让工程目录不可写（在 Windows 上不一定生效，所以不 assert 结果）
+  const r3 = captureSnapshotDetailed(proj2, [{ relativePath: 'c.c', previous: 'y' }])
+  check('快照降级: 多级降级仍能存下', r3.id !== null, r3.error)
+  if (r3.id) {
+    const l3 = listSnapshots(proj2)
+    check('快照降级: 多级降级后列表能找到', l3.some((m) => m.id === r3.id))
+  }
+  try {
+    chmodSync(proj2, 0o755)
+  } catch {
+    /* Windows 上忽略 */
+  }
+  rmSync(fb2, { recursive: true, force: true })
 
   rmSync(fbRoot, { recursive: true, force: true })
 }

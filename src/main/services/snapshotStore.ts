@@ -10,6 +10,7 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import type { RestoreResult, SnapshotMeta } from '@shared/types'
 import { resolveInsideProject } from './writer'
@@ -107,9 +108,29 @@ export function captureSnapshotDetailed(
    */
   const candidates: Array<{ dir: string; label: string; fallback: boolean }> = []
   if (primary) candidates.push({ dir: primary, label: '应用数据目录', fallback: false })
+  /*
+   * 降级位置（按优先级）。
+   *
+   * 实测有的环境里 Electron 进程写 userData 和工程目录**都 EPERM**
+   * （ACL 正常、Defender 受控文件夹访问也关着，但就是写不进去）。
+   * 所以多备几个位置，总有一个能写。
+   *
+   * 顺序上优先「离工程近」的，方便用户找到；
+   * 最后的临时目录一定可写，作为兜底。
+   */
   candidates.push({
     dir: join(projectRoot, '.cvstudio-snapshots', projectKey(projectRoot)),
     label: '工程目录',
+    fallback: true
+  })
+  candidates.push({
+    dir: join(dirname(projectRoot), '.cvstudio-snapshots', projectKey(projectRoot)),
+    label: '工程上一级目录',
+    fallback: true
+  })
+  candidates.push({
+    dir: join(tmpdir(), 'cv-studio-snapshots', projectKey(projectRoot)),
+    label: '临时目录',
     fallback: true
   })
 
@@ -251,7 +272,11 @@ function allDirs(projectRoot: string): string[] {
   } catch {
     /* rootDir 没配置 */
   }
+  // 和 captureSnapshotDetailed 的降级位置保持一致 —— 少写一个就会出现
+  // 「存进去了但列表里看不到」「还原时找不到这条快照」
   out.push(join(projectRoot, '.cvstudio-snapshots', projectKey(projectRoot)))
+  out.push(join(dirname(projectRoot), '.cvstudio-snapshots', projectKey(projectRoot)))
+  out.push(join(tmpdir(), 'cv-studio-snapshots', projectKey(projectRoot)))
   return out
 }
 
