@@ -1519,7 +1519,19 @@ html[data-theme='light'] .log {
    ========================================================================== */
 
 .workflow {
-  flex: 0 0 auto;
+  /*
+   * 宽度要能占满、也要能被压缩，**绝不能是内容宽度**。
+   *
+   * 这里原来是 `flex: 0 0 auto` —— 于是容器的宽度等于「把子元素全排成一行
+   * 需要的宽度」。子元素一多（探针徽标 + 文件名 + 下拉框），容器就比
+   * 父级还宽，`flex-wrap: wrap` 在这种「宽度按内容算」的容器里
+   * 根本找不到折行点，元素就**叠在一起**（截图中文字糊成一团就是这个）。
+   *
+   * 改成 `flex: 1 1 auto` + `min-width: 0`：容器宽度跟随父级，
+   * 装不下时子元素才会真的折到下一行。
+   */
+  flex: 1 1 auto;
+  min-width: 0;
   /* 步骤条下面的元素全靠各自 margin 撑间距（.main__content 是普通块容器，没有 flex gap）。
      这里不补 margin 的话，紧跟其后的提示框/卡片会**贴着**它，视觉上像粘在一起。
      取 14px 和 .card 的 margin-bottom 对齐。 */
@@ -1536,6 +1548,16 @@ html[data-theme='light'] .log {
   gap: 7px;
   flex-wrap: wrap;
   padding: 7px 2px 6px;
+  /*
+   * width: 100% 而不是 auto。
+   *
+   * `auto` 在 flex 容器里意味着「按内容算宽」，配合子元素的 nowrap，
+   * 容器会被撑到比父级还宽 —— 那样 flex-wrap 永远不触发，元素直接重叠。
+   * 显式 100% + min-width: 0 才能让「装不下就折行」真正生效。
+   */
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 /* 第二行（模板选择）和上面贴着，不用再留上边距 */
