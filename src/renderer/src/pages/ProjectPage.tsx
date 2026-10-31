@@ -241,7 +241,27 @@ export default function ProjectPage(): React.JSX.Element {
                                 </div>
                                 <div className="faint small">{c.detail}</div>
                               </span>
-                              {c.chip && <Badge kind="accent">{c.chip}</Badge>}
+                              {/*
+                                芯片型号徽标。名字可能很长（STM32F407IGH6），
+                                给它 maxWidth 和省略号 —— 不加的话它会顶破
+                                卡片右边界（截图里的现象）。
+                                完整型号放 title 里，鼠标悬停能看到。
+                              */}
+                              {c.chip && (
+                                <span
+                                  style={{
+                                    flex: '0 1 auto',
+                                    minWidth: 0,
+                                    maxWidth: 160,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap'
+                                  }}
+                                  title={c.chip}
+                                >
+                                  <Badge kind="accent">{c.chip}</Badge>
+                                </span>
+                              )}
                             </div>
                           ))}
                         </div>

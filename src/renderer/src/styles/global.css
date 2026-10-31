@@ -1034,6 +1034,14 @@ textarea {
   align-items: center;
   gap: 8px;
   font-size: 12.5px;
+  /*
+   * 别让内容溢出到卡片外面。
+   *
+   * 工程列表右侧的芯片徽标（「STM32F407IGH6」）在窄窗口下会被
+   * 顶到边界外面去 —— 因为 .list__item 是 flex 容器但没约束溢出，
+   * 左边的路径块宽度一撑，右边徽标就跑到容器外了。
+   */
+  overflow: hidden;
 }
 
 .list__item:last-child {
@@ -1527,19 +1535,41 @@ html[data-theme='light'] .log {
   align-items: center;
   gap: 7px;
   flex-wrap: wrap;
-  padding: 7px 2px 9px;
+  padding: 7px 2px 6px;
+}
+
+/* 第二行（模板选择）和上面贴着，不用再留上边距 */
+.workflow__probe--options {
+  padding-top: 0;
+  padding-bottom: 9px;
 }
 
 /*
- * 这一行里的「· 生成参数」这类小标签：不收缩、不换行。
+ * 这一行里除了长文件名，其它都不许收缩。
  *
- * 它们本来就是极短的词，被压缩只会让第一个字被吃掉（截图里
- * 「CMSIS-DAP / DAP-Link」丢了个 C 就是这个原因）。
- * 真正该让出空间的只有长文件名（.workflow__cfgname）和下拉框。
+ * `white-space: nowrap` 只保证「不换行」，不保证「不被压窄」——
+ * 早先徽标被压得少了第一个字母（「CMSIS-DAP」→「MSIS-DAP」）就是这个原因。
+ * 真正该让出空间的只有长文件名。
  */
 .workflow__probe > .faint,
-.workflow__probe > .badge {
+.workflow__probe > .badge,
+.workflow__probe > .linkbtn {
   flex-shrink: 0;
+}
+
+/*
+ * 长文件名：可以收缩，超长省略。
+ *
+ * min-width: 0 是 flex 子项能被压缩到内容宽度以下的前提，
+ * 不加它 max-width 和省略号都不会生效。
+ */
+.workflow__cfgname {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* 两步引导条里的模板下拉：紧凑一点，别抢了按钮的视线 */
@@ -1728,14 +1758,4 @@ html[data-theme='light'] .log {
   text-overflow: clip;
   text-align: left;
   word-break: break-all;
-}
-
-/* OpenOCD 配置文件名：长文件名在窄窗口下会顶到下一行文字上。
-   min-width: 0 是 flex 子项能被压缩的前提，不加它省略号不会生效。 */
-.workflow__cfgname {
-  min-width: 0;
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }

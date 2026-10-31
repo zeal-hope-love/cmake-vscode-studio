@@ -128,47 +128,54 @@ export function WorkflowStrip(): React.JSX.Element {
 
       {/* 生成的是什么配置 —— 探针和模板都写清楚，免得写完了才发现不对 */}
       {project && probe && (
-        <div className="workflow__probe">
-          <span className="faint small">按</span>
-          <span className="badge badge--accent">{probe.label}</span>
-          <span className="faint small">生成 4 个配置文件</span>
+        <>
           {/*
-            OpenOCD 配置文件名（`openocd-stm32f4x-cmsis-dap.cfg`）很长，
-            窗口窄的时候会顶到下一行的「生成参数」上 —— 截图里两个词是叠着的。
-            给它单独一个可收缩的容器：超长时用省略号收尾，完整名字放 title 里。
+            分两行放，别挤成一行。
+
+            原来「按 [探针徽标] 生成 4 个配置文件 · openocd-xxx.cfg
+            · 生成参数 [下拉框] 管理模板」全在一行 —— 中等宽度的窗口下
+            必然叠着（用户截图里「CMSIS-DAP / DAP-Link」和「配置文件」是重合的），
+            因为这一行有 7 个元素、其中一个还是长文件名。
           */}
-          {bundle?.openocdCfg && (
-            <span className="mono small faint workflow__cfgname" title={bundle.openocdCfg.fileName}>
-              · {bundle.openocdCfg.fileName}
-            </span>
-          )}
+          <div className="workflow__probe">
+            <span className="faint small">按</span>
+            <span className="badge badge--accent">{probe.label}</span>
+            <span className="faint small">生成 4 个配置文件</span>
+            {bundle?.openocdCfg && (
+              <span
+                className="mono small faint workflow__cfgname"
+                title={bundle.openocdCfg.fileName}
+              >
+                · {bundle.openocdCfg.fileName}
+              </span>
+            )}
+          </div>
 
           {/*
-            模板选择就放在这一步里（而不是塞进写入确认弹窗）——
-            你是在「准备写」的时候决定用什么配置的，不是确认那一刻才决定。
+            模板选择单独一行：它是「决定怎么写」的选项，
+            和上面「写出来是什么」是两件事，混在一起反而看不明白。
           */}
-          <span className="faint small" style={{ marginLeft: 4 }}>
-            · 生成参数
-          </span>
-          <select
-            className="select workflow__template"
-            aria-label="生成参数来源（模板）"
-            value={activeTemplate?.id ?? ''}
-            onChange={(e) => void switchTemplate(e.target.value)}
-            title="选「默认」= 按本工程的检测结果生成；选模板 = 用模板里的选择"
-          >
-            <option value="">默认：按本工程的检测结果生成</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.builtin ? `${t.name}（内置样板）` : t.name}
-              </option>
-            ))}
-          </select>
-
-          <button type="button" className="linkbtn" onClick={() => setPage('templates')}>
-            管理模板
-          </button>
-        </div>
+          <div className="workflow__probe workflow__probe--options">
+            <span className="faint small">用哪套生成参数</span>
+            <select
+              className="select workflow__template"
+              aria-label="生成参数来源（模板）"
+              value={activeTemplate?.id ?? ''}
+              onChange={(e) => void switchTemplate(e.target.value)}
+              title="选「默认」= 按本工程的检测结果生成；选模板 = 用模板里的选择"
+            >
+              <option value="">默认：按本工程的检测结果生成</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.builtin ? `${t.name}（内置样板）` : t.name}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="linkbtn" onClick={() => setPage('templates')}>
+              管理模板
+            </button>
+          </div>
+        </>
       )}
     </div>
   )
