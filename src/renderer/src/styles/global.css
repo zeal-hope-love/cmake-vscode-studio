@@ -291,6 +291,54 @@ textarea {
   transform: translateY(-50%) scaleY(1);
 }
 
+/* 折叠父节点右侧的箭头：展开时朝下，收起时转 -90° 朝右 */
+.navitem__chevron {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  color: var(--text-faint);
+  transition: transform 0.16s var(--ease-out);
+}
+
+.navitem__chevron[data-collapsed='true'] {
+  transform: rotate(-90deg);
+}
+
+/*
+ * 子项列表：左侧一条细线把子项「挂」在父节点下面，一眼能看出层级关系，
+ * 比单纯缩进更清楚。缩进 26px = 父节点图标(16) + gap(9) + 让一点。
+ */
+.navsub {
+  position: relative;
+  padding-left: 26px;
+  margin: 2px 0 2px 0;
+}
+
+.navsub::before {
+  content: '';
+  position: absolute;
+  left: 13px;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  background: var(--border);
+}
+
+/* 子项：比父项小一号、矮一点，视觉上「不抢」父节点的位置 */
+.navitem--sub {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.navitem--sub.navitem--active {
+  padding-left: 12px;
+}
+
+/* 子项不画左侧高亮条 —— 已经有父节点那条线了，再加会显得乱 */
+.navitem--sub::before {
+  display: none;
+}
+
 .navitem__icon {
   width: 16px;
   text-align: center;
@@ -526,11 +574,25 @@ textarea {
  * 缓动曲线：--ease-out 是「快进慢出」，起步快、收尾稳，中文界面里小位移用它最自然。
  * 全站统一这一条，比各处用默认的 ease 要有质感得多（默认 ease 结尾拖泥带水）。
  */
+/*
+ * 按钮：**内容是自适应的**，不锁死 height（锁死会被长文案/大字号/高 DPI 撑破）。
+ *
+ * 高度由 `vertical padding + line-height` 决定。这里三个值都写死成固定值，
+ * 所以同一个 .btn 无论装什么文字，算出来的高度都是同一个常数：
+ *
+ *   line-height 20px + 上下 padding 4px×2 + border 1px×2 = 30px
+ *
+ * 关键点：**必须给 .btn 显式写 line-height**。之前没写，按钮文字继承了页面的
+ * 行高（body 上可能是 normal，随字体变化），而主按钮又叠加了 font-weight: 600，
+ * 两个按钮的行盒高度算出来就差了 1~2px —— 这就是「高度不一致」的真正原因。
+ */
 .btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 5px 11px;
+  padding: 4px 11px;
+  line-height: 20px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--bg-raised);
@@ -567,17 +629,21 @@ textarea {
 /*
  * 主按钮（「写入配置」「构建」「开始安装」这类真正的主动作）。
  *
- * 之前它只换了颜色、尺寸和普通按钮一样，视觉重量不够 —— 一屏里看不出该点哪个。
- * 这里**放大一号**（padding 5/11 → 7/14），让主次一眼分明。
- * 只改 padding 不改 font-size：按钮变大了但字没变大，不会破坏整页的字号节奏。
+ * **尺寸、字重、边框粗细全部和普通按钮一致**，只靠「实心主色底 + 白字」区分主次。
+ *
+ * 走过的弯路（都试过，都不对）：
+ *   ① 加高 padding  → 不同容器里行高不同，同一按钮高度还不一样
+ *   ② 加宽 padding  → 「选择工程目录…」和「去工程总览」并排时一个宽一个窄
+ *   ③ 加粗字重出   → 文字变宽，按钮跟着变宽，还是「一大一小」
+ *   ④ 加投影       → 视觉上更重，并排看仍不平衡
+ *
+ * 用户的原话：「大小其实已经够了，用不同的颜色去突出就可以了，不用改成一一大一小」。
+ * 所以这里只留下颜色 —— 尺寸一个像素都不动。
  */
 .btn--primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
-  font-weight: 600;
-  padding: 7px 14px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 .btn--primary:active:not(:disabled) {
   /* 主按钮有阴影，按下去时收掉阴影 + 下沉，比单纯位移更有按压感 */
@@ -608,13 +674,16 @@ textarea {
   color: var(--text);
 }
 
+/* 小号按钮：整体缩一档，高度同样用固定值，和其它按钮走同一套规则 */
 .btn--sm {
-  padding: 3px 8px;
+  height: 24px;
+  padding: 0 8px;
   font-size: 11.5px;
 }
 
+/* 纯图标按钮：横向 padding 收窄，高度仍和同排按钮一致 */
 .btn--icon {
-  padding: 4px 7px;
+  padding: 0 7px;
 }
 
 /* ==========================================================================
@@ -641,10 +710,30 @@ textarea {
   color: var(--text-faint);
 }
 
+/*
+ * 输入框和按钮**同高**（28px），这样「输入框 + 按钮」并排时基线是齐的。
+ * 同样用固定 height（不是 min-height）—— 理由和按钮一样：
+ * min-height 只是下限，内容行高偏大时仍会被撑高，并排就会差几个像素。
+ */
 .input,
-.select,
+.select {
+  width: 100%;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-input);
+  color: var(--text);
+  outline: none;
+  transition:
+    border-color 0.12s var(--ease-out),
+    box-shadow 0.12s var(--ease-out);
+}
+
+/* 多行框按内容撑开，不锁高度 */
 .textarea {
   width: 100%;
+  min-height: 120px;
   padding: 6px 9px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
@@ -652,8 +741,8 @@ textarea {
   color: var(--text);
   outline: none;
   transition:
-    border-color 0.12s,
-    box-shadow 0.12s;
+    border-color 0.12s var(--ease-out),
+    box-shadow 0.12s var(--ease-out);
 }
 
 .input:focus,

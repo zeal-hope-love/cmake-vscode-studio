@@ -20,6 +20,7 @@ import TasksPage from './pages/TasksPage'
 import SettingsPage from './pages/SettingsPage'
 import CppPage from './pages/CppPage'
 import ToolsPage from './pages/ToolsPage'
+import ProbeSettingsPage from './pages/ProbeSettingsPage'
 import TemplatesPage from './pages/TemplatesPage'
 import InspectPage from './pages/InspectPage'
 import HistoryPage from './pages/HistoryPage'
@@ -37,6 +38,7 @@ const PAGES: Record<PageKey, () => React.JSX.Element> = {
   build: BuildPage,
   inspect: InspectPage,
   templates: TemplatesPage,
+  probe: ProbeSettingsPage,
   tools: ToolsPage,
   history: HistoryPage,
   about: AboutPage

@@ -65,8 +65,14 @@ export function PacksPage(): React.JSX.Element {
   const notify = useStudio((s) => s.notify)
   const refreshHistory = useStudio((s) => s.refreshHistory)
 
-  const [packs, setPacks] = React.useState<PackManifest[]>([])
-  const [packId, setPackId] = React.useState('')
+  /**
+   * 包列表和「当前是哪个包」都放在 store 里 —— 左侧「扩展」组的导航项由同一份
+   * 数据生成，两处共用一个来源才不会出现「导航里 3 个包、页面里只认 1 个」。
+   */
+  const packs = useStudio((s) => s.packs)
+  const packId = useStudio((s) => s.activePackId) ?? ''
+  const setPackId = useStudio((s) => s.setActivePackId)
+  const refreshPacks = useStudio((s) => s.refreshPacks)
   const [inspect, setInspect] = React.useState<PackInspectResult | null>(null)
   const [busy, setBusy] = React.useState(false)
   const [params, setParams] = React.useState<Record<string, string | number | boolean>>({})
@@ -82,18 +88,10 @@ export function PacksPage(): React.JSX.Element {
 
   const pack = packs.find((p) => p.id === packId) ?? null
 
-  // ---- 装载包列表 ----
+  // ---- 装载包列表（store 里已有就直接用）----
   React.useEffect(() => {
-    void (async () => {
-      try {
-        const list = await window.api.packList()
-        setPacks(list)
-        setPackId((cur) => cur || list[0]?.id || '')
-      } catch (err) {
-        notify('err', `读取模块包失败：${err instanceof Error ? err.message : String(err)}`)
-      }
-    })()
-  }, [notify])
+    if (packs.length === 0) void refreshPacks()
+  }, [packs.length, refreshPacks])
 
   // ---- 选包 / 换工程 → 重新检查兼容性 ----
   const reload = React.useCallback(async (): Promise<void> => {

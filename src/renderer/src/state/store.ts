@@ -34,6 +34,7 @@ import {
   type WriteProgress,
   type WriteResult
 } from '@shared/types'
+import type { PackManifest } from '@shared/packTypes'
 
 export type PageKey =
   | 'project'
@@ -46,6 +47,7 @@ export type PageKey =
   | 'build'
   | 'inspect'
   | 'templates'
+  | 'probe'
   | 'tools'
   | 'history'
   | 'about'
@@ -191,6 +193,19 @@ interface StudioState {
   refreshTemplates: () => Promise<void>
   templates: ConfigTemplate[]
 
+  /**
+   * 已安装的模块包清单。
+   *
+   * 提到 store 里是因为**左侧「扩展」组的导航项由它动态生成** ——
+   * packs/ 目录下多一个包，导航里就多一行，不需要改代码。
+   * PacksPage 也读同一份，避免两处各拉一次导致不一致。
+   */
+  packs: PackManifest[]
+  refreshPacks: () => Promise<void>
+  /** 点导航里的某个扩展时记录，PacksPage 打开后直接定位到它 */
+  activePackId: string | null
+  setActivePackId: (id: string | null) => void
+
   refreshHistory: () => Promise<void>
   removeHistoryEntry: (id: string) => Promise<void>
   clearHistory: () => Promise<void>
@@ -234,6 +249,8 @@ export const useStudio = create<StudioState>()((set, get) => ({
   bundle: null,
   candidates: [],
   templates: [],
+  packs: [],
+  activePackId: null,
 
   activePage: 'project',
   ready: false,
@@ -281,6 +298,8 @@ export const useStudio = create<StudioState>()((set, get) => ({
       // 模板列表要在多处用到（模板页、写入确认弹窗的模板下拉），启动就拉一次
       void get().refreshTemplates()
       void get().refreshHistory()
+      // 模块包：左侧「扩展」组的导航项由它生成，必须启动就拉到
+      void get().refreshPacks()
 
       // 故意不自动载入上次的工程。
       // 自动载入会让「三步引导」一打开就停在第三步（工程已就绪、就等写入），
@@ -786,6 +805,24 @@ export const useStudio = create<StudioState>()((set, get) => ({
       /* 忽略 */
     }
   },
+
+  // ------------------------------------------------------------------------
+  // 模块包（扩展组导航由它生成）
+  // ------------------------------------------------------------------------
+
+  refreshPacks: async () => {
+    try {
+      const packs = await window.api.packList()
+      set({ packs })
+      // 没选过就用第一个，保证「调试模块」这类单包场景点进去就有内容
+      const { activePackId } = get()
+      if (!activePackId && packs.length > 0) set({ activePackId: packs[0].id })
+    } catch {
+      /* 忽略：读不到包时导航只显示一个占位项 */
+    }
+  },
+
+  setActivePackId: (id) => set({ activePackId: id }),
 
   /**
    * 把模板套用到当前工程。

@@ -21,7 +21,6 @@ import {
   DataTable,
   EmptyState,
   Field,
-  Kv,
   Modal,
   PageBody,
   PageHeader,
@@ -32,13 +31,8 @@ import {
 } from '../components/ui'
 import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
-import { PROBE_OPTIONS, probeByKey } from '@shared/probes'
-import {
-  guessChipFamily,
-  mapOpenocdTarget,
-  openocdCfgFileName,
-  targetCfgOptions
-} from '@shared/chipTargets'
+// 探针 / target / SVD 相关的导入已随「调试探针与目标」卡片迁到 ProbeSettingsPage
+import { guessChipFamily } from '@shared/chipTargets'
 import type { GenOptions } from '@shared/types'
 
 /**
@@ -259,59 +253,12 @@ export default function ToolsPage(): React.JSX.Element {
     patchOptions(patch)
   }
 
-  const onProbeChange = (key: string): void => {
-    if (!options) return
-    const probe = probeByKey(key)
-    const prev = probeByKey(options.probeKey)
-    const target = options.targetCfg
-
-    // 接线配置文件名由「target + 探针」共同决定，探针一换文件名就会变
-    const prevFile = prev.needsOpenocdCfg && target ? openocdCfgFileName(target, prev.key) : null
-    const nextFile = probe.needsOpenocdCfg && target ? openocdCfgFileName(target, probe.key) : null
-
-    patchOptions({
-      probeKey: probe.key,
-      interfaceCfg: probe.interfaceCfg,
-      resetConfig: probe.resetConfig
-    })
-    void window.api.saveSettings({ probeKey: probe.key })
-
-    let text = `已切换到 ${probe.label}，配置已按新探针重新生成`
-    if (!probe.needsOpenocdCfg) {
-      text = `已切换到 ${probe.label}：该探针由 cortex-debug 直接驱动，不再生成 ${
-        prevFile ?? 'openocd-*.cfg'
-      }，配置已重新生成`
-    } else if (prevFile && nextFile && prevFile !== nextFile) {
-      text = `已切换到 ${probe.label}：接线配置文件名从 ${prevFile} 变为 ${nextFile}，配置已重新生成`
-    }
-    notify('ok', text)
-  }
-
   const resetToAuto = async (): Promise<void> => {
     if (!project) return
     // 不带 overrides 就是「按工程重新推断」的默认参数
     await loadProject(project.root)
   }
 
-  // ------------------------------------------------------------------------
-  // 派生数据
-  // ------------------------------------------------------------------------
-
-  const targetOptions = React.useMemo(() => {
-    const list: Array<{ value: string; label: string }> = [
-      { value: '', label: '（不设置 target 配置）' },
-      ...targetCfgOptions()
-    ]
-    const current = options?.targetCfg ?? ''
-    if (current && !list.some((o) => o.value === current)) {
-      list.unshift({ value: current, label: `${current}（当前值）` })
-    }
-    return list
-  }, [options?.targetCfg])
-
-  const suggestedTarget = mapOpenocdTarget(project?.device)
-
-  // ------------------------------------------------------------------------
   // 头部
   // ------------------------------------------------------------------------
 
@@ -490,199 +437,6 @@ export default function ToolsPage(): React.JSX.Element {
     </Card>
   )
 
-  const probeCard = options ? (
-    <Card title="调试探针与目标" hint="改这里会立刻重新生成 launch.json / tasks.json / openocd-*.cfg">
-      <div className="grid grid--2">
-        <div>
-          <Field label="调试探针" hint="决定 launch.json 的 servertype，以及是否需要 OpenOCD 接线配置">
-            <Select
-              value={options.probeKey}
-              options={PROBE_OPTIONS.map((p) => ({ value: p.key, label: p.label }))}
-              onChange={(e) => onProbeChange(e.target.value)}
-            />
-          </Field>
-
-          <Field label="OpenOCD target 配置" hint="接线配置里 source 的 target/*.cfg；选错会连不上芯片">
-            <Select
-              value={options.targetCfg}
-              options={targetOptions}
-              onChange={(e) => patchOptions({ targetCfg: e.target.value })}
-            />
-          </Field>
-
-          {suggestedTarget && suggestedTarget !== options.targetCfg && (
-            <div className="flex mb-12">
-              <span className="small muted">
-                芯片 <span className="mono accent">{project?.device}</span> 通常用{' '}
-                <span className="mono accent">{suggestedTarget}</span>
-              </span>
-              <Button size="sm" onClick={() => patchOptions({ targetCfg: suggestedTarget })}>
-                用建议值
-              </Button>
-            </div>
-          )}
-
-          <Field
-            label="自定义 target 配置"
-            hint="直接填文件名，例如 stm32f4x.cfg（可与上面的下拉互相对照）"
-          >
-            <TextInput
-              mono
-              value={options.targetCfg}
-              placeholder="stm32f1x.cfg"
-              onChange={(e) => patchOptions({ targetCfg: e.target.value })}
-            />
-          </Field>
-        </div>
-
-        <div>
-          <Field
-            label="cortex-debug device"
-            hint="写进 launch.json 的 device 字段；留空则用工程里识别到的芯片型号"
-          >
-            <TextInput
-              mono
-              value={options.device}
-              placeholder={project?.device ?? '例如 STM32F103C8'}
-              onChange={(e) => patchOptions({ device: e.target.value })}
-            />
-          </Field>
-
-          <Field
-            label="适配器速度（kHz）"
-            hint="写进 openocd-*.cfg 的 adapter speed；J-Link 原生探针用作 -speed"
-          >
-            <TextInput
-              type="number"
-              value={String(options.adapterSpeed)}
-              onChange={(e) => patchOptions({ adapterSpeed: Number(e.target.value) || 0 })}
-              onBlur={(e) =>
-                void window.api.saveSettings({ adapterSpeed: Number(e.target.value) || 0 })
-              }
-            />
-          </Field>
-
-          {/*
-            Live Watch —— 不停机看全局变量（类似 Keil 的 Live Watch）。
-            cortex-debug 1.12 起提供，只对 openocd / stlink / jlink 生效，PyOCD 不支持；
-            官方标注「实验性」，且只测过 SWD。
-          */}
-          <Field
-            label="Live Watch（不停机看全局变量）"
-            hint="写进 launch.json 的 liveWatch，以及 settings.json 的 cortex-debug.liveWatchRefreshRate"
-          >
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 8,
-                padding: '8px 10px',
-                border: '1px solid var(--border)',
-                borderRadius: 6
-              }}
-            >
-              <Checkbox
-                checked={Boolean(options.liveWatch)}
-                onChange={(on) => {
-                  patchOptions({ liveWatch: on })
-                  void window.api.saveSettings({ liveWatch: on })
-                }}
-                label={
-                  options.liveWatch
-                    ? '已启用 —— F5 起来后在 Live Watch 面板里「Add to Live Watch」加变量'
-                    : '未启用'
-                }
-              />
-
-              {options.liveWatch && (
-                <div className="row" style={{ alignItems: 'flex-end' }}>
-                  <div style={{ width: 150 }}>
-                    <Field label="采样率（次/秒）" hint="0~20，默认 4">
-                      <TextInput
-                        type="number"
-                        min={0}
-                        max={20}
-                        value={String(options.liveWatchSamplesPerSecond)}
-                        onChange={(e) => {
-                          const v = Math.max(0, Math.min(20, Number(e.target.value) || 0))
-                          patchOptions({ liveWatchSamplesPerSecond: v })
-                          void window.api.saveSettings({ liveWatchSamplesPerSecond: v })
-                        }}
-                      />
-                    </Field>
-                  </div>
-                  <div style={{ width: 170 }}>
-                    <Field label="面板刷新（毫秒）" hint="默认 300，别低于 250">
-                      <TextInput
-                        type="number"
-                        min={100}
-                        max={5000}
-                        value={String(options.liveWatchRefreshRate)}
-                        onChange={(e) => {
-                          const v = Math.max(100, Math.min(5000, Number(e.target.value) || 300))
-                          patchOptions({ liveWatchRefreshRate: v })
-                          void window.api.saveSettings({ liveWatchRefreshRate: v })
-                        }}
-                      />
-                    </Field>
-                  </div>
-                </div>
-              )}
-
-              <div className="faint small" style={{ lineHeight: 1.7 }}>
-                {!['openocd', 'stlink', 'jlink'].includes(probeByKey(options.probeKey).servertype)
-                  ? `当前探针（${probeByKey(options.probeKey).label}）用的是 ${probeByKey(options.probeKey).servertype}，cortex-debug 的 Live Watch 不支持它 —— 打开也不会生效。`
-                  : '注意：只能看**全局变量和静态变量**（cortex-debug 靠 nm/objdump 读符号表，栈上的局部变量看不到，会显示 not available）。'}
-                <br />
-                采样率和面板刷新是两回事：采样快但刷新慢，看起来就是「值跳着变」，这是正常的。
-              </div>
-            </div>
-          </Field>
-
-          <Kv
-            items={[
-              [
-                '接线配置文件名',
-                bundle?.openocdCfg ? (
-                  <span className="mono accent">{bundle.openocdCfg.fileName}</span>
-                ) : (
-                  <span className="faint">（该探针不需要 OpenOCD 接线配置）</span>
-                )
-              ],
-              [
-                'interface 配置',
-                options.interfaceCfg ? (
-                  <span className="mono">{options.interfaceCfg}</span>
-                ) : (
-                  <span className="faint">—</span>
-                )
-              ],
-              [
-                'reset_config',
-                options.resetConfig ? (
-                  <span className="mono">{options.resetConfig}</span>
-                ) : (
-                  <span className="faint">—</span>
-                )
-              ],
-              null,
-              ['识别到的芯片', project?.device ?? <span className="faint">未识别</span>],
-              ['CubeMX .ioc', <PathText key="ioc" value={project?.ioc?.file} max={56} />],
-              [
-                '芯片系列',
-                guessChipFamily(project?.device) ?? <span className="faint">未能从型号推断</span>
-              ]
-            ]}
-          />
-        </div>
-      </div>
-    </Card>
-  ) : (
-    needProjectCard(
-      '调试探针与目标',
-      '探针、target、device 都是针对具体工程的生成参数，载入工程后才能调整。'
-    )
-  )
 
   const genCard = options ? (
     <Card
@@ -731,8 +485,8 @@ export default function ToolsPage(): React.JSX.Element {
 
       <PageBody>
         {toolsCard}
-        {probeCard}
-        {genCard}
+        {genCard}{' '}
+        {/* 探针 / 芯片 / Live Watch 等生成参数已移到「配置 → 探针与芯片」独立页 */}
       </PageBody>
 
       {editorOpen && (

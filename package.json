@@ -8,9 +8,9 @@
   "license": "MIT",
   "private": true,
   "scripts": {
-    "dev": "electron-vite dev",
-    "dev:inspect": "electron-vite dev --inspect --sourcemap",
-    "dev:brk": "electron-vite dev --inspectBrk --sourcemap",
+    "dev": "electron-vite dev -- --no-sandbox",
+    "dev:inspect": "electron-vite dev --inspect --sourcemap -- --no-sandbox",
+    "dev:brk": "electron-vite dev --inspectBrk --sourcemap -- --no-sandbox",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
