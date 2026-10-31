@@ -37,13 +37,13 @@ export function NoProject(props: {
     <EmptyState title="还没有选择工程">
       <div className="mb-12">
         {props.reason ? `${props.reason} ` : '这一页要读工程里的文件。'}
-        先到「工程总览」页选一个 CMake 工程，或者直接用下面的按钮。
+        先到「配置调试文件」页选一个 CMake 工程，或者直接用下面的按钮。
       </div>
       <div className="flex" style={{ justifyContent: 'center' }}>
         <Button variant="primary" onClick={() => void browseProject()}>
           选择工程目录…
         </Button>
-        <Button onClick={() => setPage('project')}>去工程总览</Button>
+        <Button onClick={() => setPage('project')}>去配置调试文件</Button>
       </div>
     </EmptyState>
   )

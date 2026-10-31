@@ -664,7 +664,7 @@ export default function TemplatesPage(): React.JSX.Element {
                     title={
                       project
                         ? '用这个模板的参数重新检测当前工程'
-                        : '还没有选择工程，先去「工程总览」选一个'
+                        : '还没有选择工程，先去「配置调试文件」选一个'
                     }
                   >
                     {applyingId === t.id ? <Spinner /> : null}

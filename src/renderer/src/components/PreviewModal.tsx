@@ -232,7 +232,7 @@ export function PreviewModal(): React.JSX.Element | null {
 
             {/*
               这里只**显示**用的是哪套生成参数，不提供切换 ——
-              切换的入口在「工程总览」两步引导条的第②步里（那儿才是决定「要怎么写」的地方）。
+              切换的入口在「配置调试文件」两步引导条的第②步里（那儿才是决定「要怎么写」的地方）。
             */}
             <div className="row mt-8" style={{ alignItems: 'center', gap: 8 }}>
               <span className="small" style={{ flex: '0 0 auto' }}>

@@ -233,35 +233,54 @@ export function PacksPage(): React.JSX.Element {
 
   // ------------------------------------------------------------------------
 
-  if (!projectRoot || !project) {
-    return (
-      <>
-        <PageHeader title="调试模块" subtitle="还没有选择工程" />
-        <PageBody>
-          <NoProject reason="要往工程里装代码，得先知道工程长什么样（有没有那个串口、有没有 FreeRTOS）。" />
-        </PageBody>
-      </>
-    )
-  }
+  /*
+   * 没选工程时**不要整页替换成空状态**。
+   *
+   * 这一页和「模板」一样属于「了解 / 配置这个模块本身」，
+   * 不依赖具体工程 —— 用户可以先进来看这个模块是干什么的、
+   * 有哪些内置模板、格式说明长什么样。只有真的要「写入工程」时
+   * 才需要工程，那时候再提示。
+   *
+   * 所以下面统一用 `hasProject` 判断，而不是一进来就 return。
+   */
+  const hasProject = Boolean(projectRoot && project)
 
-  const errCount = inspect?.report.checks.filter((c) => c.level === 'err').length ?? 0
+  const errCount = hasProject
+    ? (inspect?.report.checks.filter((c) => c.level === 'err').length ?? 0)
+    : 0
 
-  // 移植包：整页交给 PortPackPanel
+  // 移植包：整页交给 PortPackPanel（它内部也要工程，所以还是得挡一下）
   if (pack && isPortPack && portMode) {
+    if (!hasProject) {
+      return (
+        <>
+          <PageHeader title={pack.name} subtitle="还没有选择工程" />
+          <PageBody>
+            <NoProject reason="移植要改这个工程的 .ioc 和源码，得先选一个工程。" />
+          </PageBody>
+        </>
+      )
+    }
     return (
-      <PortPackPanel pack={pack} projectRoot={projectRoot} onBack={() => setPortMode(false)} />
+      <PortPackPanel pack={pack} projectRoot={projectRoot!} onBack={() => setPortMode(false)} />
     )
   }
 
   return (
     <>
       <PageHeader
-        title="调试模块"
+        title={pack?.name ?? '模块包'}
         subtitle={
-          inspect
-            ? `${pack?.name ?? packId} · 检查 ${inspect.report.checks.length} 项` +
-              (errCount ? ` · ${errCount} 项致命` : ' · 可以装')
-            : '正在检查工程…'
+          !hasProject
+            ? '还没有选择工程 · 可以先看模块说明和模板，装之前需要选一个工程'
+            : inspect
+              ? `检查 ${inspect.report.checks.length} 项` +
+                (errCount
+                  ? ` · ${errCount} 项致命`
+                  : isPortPack
+                    ? ' · 用「进入移植流程」'
+                    : ' · 可以装')
+              : '正在检查工程…'
         }
         actions={
           <Button onClick={() => void reload()} disabled={busy}>
@@ -275,24 +294,37 @@ export function PacksPage(): React.JSX.Element {
             以前这里是个「选模块」下拉框，但用户进这一页之前已经在左边导航
             点过具体哪个模块了，再让他选一次纯属重复。现在只显示当前模块的
             名字和简介，换模块直接用左侧导航。 */}
-        <Card
-          title={pack?.name ?? '模块包'}
-          hint={pack ? pack.id : undefined}
-          actions={
-            isPortPack ? (
-              <Button size="sm" variant="primary" onClick={() => setPortMode(true)}>
-                <Icons.write />
-                进入移植流程
-              </Button>
-            ) : null
-          }
-        >
+        <Card title={pack?.name ?? '模块包'} hint={pack ? pack.id : undefined}>
           {pack ? (
             <>
               <div className="small">{pack.summary}</div>
+
+              {/*
+                移植包**只在这一处**给入口。
+                以前右上角有个「进入移植流程」、页面底下还有个「写入工程」，
+                两个按钮说的是同一件事，而且后者走的是 vofa 那套流程 ——
+                对 VT13 根本不适用。现在移植包直接把常规配置区整个隐藏，
+                这里放一个显眼的按钮，指向唯一正确的入口。
+              */}
               {isPortPack && (
-                <div className="small faint" style={{ marginTop: 8 }}>
-                  这个模块要改 .ioc、调 CubeMX 重新生成，流程和普通模块包不同
+                <div
+                  className="row"
+                  style={{
+                    marginTop: 14,
+                    paddingTop: 14,
+                    borderTop: '1px solid var(--border)',
+                    alignItems: 'center',
+                    gap: 12
+                  }}
+                >
+                  <Button variant="primary" onClick={() => setPortMode(true)}>
+                    <Icons.write />
+                    进入移植流程
+                  </Button>
+                  <span className="small faint">
+                    这个模块要改 .ioc、调 CubeMX 重新生成，走的是另一套流程
+                    （预检 → 执行 → 验收），不是下面那种「生成清单再写入」
+                  </span>
                 </div>
               )}
             </>
@@ -360,6 +392,13 @@ export function PacksPage(): React.JSX.Element {
             )}
           </Card>
         )}
+        {/* ---- 常规模块包（vofa 这类）的配置区 ----
+            移植包（VT13）走的是上面那个「进入移植流程」按钮，
+            它是另一套流水线（改 .ioc → 调 CubeMX → 替换文件 → 验收），
+            参数也好、改动清单也好，都由那个面板自己管。
+            这里再摆一份「写入工程」只会让人以为有两套做法。 */}
+        {!isPortPack && (
+          <>
 
         {/* ---- ③ 参数 ---- */}
         {pack && (
@@ -717,6 +756,8 @@ export function PacksPage(): React.JSX.Element {
             </>
           )}
         </Card>
+          </>
+        )}
       </PageBody>
 
       {confirmOpen && plan && (

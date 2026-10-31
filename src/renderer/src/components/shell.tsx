@@ -54,7 +54,7 @@ const NAV: Array<{ group: string; items: NavEntry[] }> = [
   {
     group: '工程',
     items: [
-      { type: 'leaf', page: 'project', label: '工程总览', icon: Icons.project },
+      { type: 'leaf', page: 'project', label: '配置调试文件', icon: Icons.project },
       { type: 'leaf', page: 'inspect', label: '检查与清理', icon: Icons.broom },
       { type: 'leaf', page: 'sources', label: '源文件管理', icon: Icons.tasks },
       { type: 'leaf', page: 'build', label: '构建与烧录', icon: Icons.build }

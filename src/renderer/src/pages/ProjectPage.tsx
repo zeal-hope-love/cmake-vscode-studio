@@ -110,8 +110,8 @@ export default function ProjectPage(): React.JSX.Element {
   return (
     <>
       <PageHeader
-        title="工程总览"
-        subtitle="自动读取工程自身的 CMake 与 CubeMX 信息，不需要你手填"
+        title="配置调试文件"
+        subtitle="自动读取工程自身的 CMake 与 CubeMX 信息，把 .vscode 里那四份配置生成好"
         actions={openActions}
       />
 

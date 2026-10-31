@@ -282,7 +282,7 @@ export default function ProbeSettingsPage(): React.JSX.Element {
         </Card>
 
         <Alert kind="info">
-          这些参数会写进 <span className="mono">.vscode/</span> 下的配置文件。改完记得回「工程总览」点
+          这些参数会写进 <span className="mono">.vscode/</span> 下的配置文件。改完记得回「配置调试文件」点
           <b> 写入配置 </b>才会真正落盘。
         </Alert>
       </PageBody>

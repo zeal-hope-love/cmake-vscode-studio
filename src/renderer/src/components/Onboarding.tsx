@@ -183,7 +183,7 @@ const STEPS: Step[] = [
     body: (
       <div className="onboard-table">
         {[
-          ['工程总览', '★ 选工程、看检测结果、写入配置', '每天都会用到'],
+          ['配置调试文件', '★ 选工程、看检测结果、写入配置', '每天都会用到'],
           ['调试 launch.json', 'F5 下拉框里有哪些配置', '要加自定义调试配置时才来'],
           ['任务 tasks.json', 'Ctrl+Shift+B 的任务', '要加构建/烧录任务时才来'],
           ['设置 settings.json', 'OpenOCD 路径、cmake 配置等', '工具路径没探测到时来'],
