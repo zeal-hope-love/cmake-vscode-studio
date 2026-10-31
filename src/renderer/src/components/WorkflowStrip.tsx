@@ -132,8 +132,15 @@ export function WorkflowStrip(): React.JSX.Element {
           <span className="faint small">按</span>
           <span className="badge badge--accent">{probe.label}</span>
           <span className="faint small">生成 4 个配置文件</span>
+          {/*
+            OpenOCD 配置文件名（`openocd-stm32f4x-cmsis-dap.cfg`）很长，
+            窗口窄的时候会顶到下一行的「生成参数」上 —— 截图里两个词是叠着的。
+            给它单独一个可收缩的容器：超长时用省略号收尾，完整名字放 title 里。
+          */}
           {bundle?.openocdCfg && (
-            <span className="mono small faint">· {bundle.openocdCfg.fileName}</span>
+            <span className="mono small faint workflow__cfgname" title={bundle.openocdCfg.fileName}>
+              · {bundle.openocdCfg.fileName}
+            </span>
           )}
 
           {/*

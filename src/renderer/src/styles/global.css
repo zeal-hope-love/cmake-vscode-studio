@@ -190,7 +190,22 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 46vw;
+  /*
+   * 路径要能**让出空间给后面的工程名徽标**。
+   *
+   * 原来写死 max-width: 46vw —— 路径长时自己占满 46vw，后面的
+   * `Hero_9.1` 徽标被挤到和文字重叠（截图里就是这个现象）。
+   * 改成 flex 收缩：min-width 归零才能真正缩，父容器是 flex 布局，
+   * 路径吃掉剩余空间，徽标永远完整显示。
+   */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 42vw;
+}
+
+/* 工程名徽标：不许被压缩 */
+.titlebar__path + .badge {
+  flex: 0 0 auto;
 }
 
 .titlebar__spacer {
@@ -1692,4 +1707,14 @@ html[data-theme='light'] .log {
   text-overflow: clip;
   text-align: left;
   word-break: break-all;
+}
+
+/* OpenOCD 配置文件名：长文件名在窄窗口下会顶到下一行文字上。
+   min-width: 0 是 flex 子项能被压缩的前提，不加它省略号不会生效。 */
+.workflow__cfgname {
+  min-width: 0;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
