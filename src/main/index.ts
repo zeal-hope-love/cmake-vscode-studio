@@ -56,7 +56,7 @@ function createWindow(): void {
     minWidth: 1120,
     minHeight: 700,
     show: false,
-    title: 'CMake / VSCode 工程配置器',
+    title: 'CV Studio',
     /**
      * 窗口 / 任务栏图标。
      *

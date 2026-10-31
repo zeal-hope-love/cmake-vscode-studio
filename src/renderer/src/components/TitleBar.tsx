@@ -29,13 +29,13 @@ export function TitleBar(): React.JSX.Element {
         title={
           appInfo
             ? `${appInfo.name} v${appInfo.version}\nElectron ${appInfo.electron} · Chromium ${appInfo.chrome} · Node ${appInfo.node}\n点右上角「?」看完整信息`
-            : 'CMake / VSCode 工程配置器'
+            : 'CV Studio'
         }
       >
         <span className="titlebar__mark">
           <LogoMark />
         </span>
-        <span>CMake / VSCode 工程配置器</span>
+        <span>CV Studio</span>
         {appInfo && <span className="titlebar__version">v{appInfo.version}</span>}
       </div>
       <span className="titlebar__path" title={projectRoot}>

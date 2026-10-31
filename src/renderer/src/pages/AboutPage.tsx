@@ -19,7 +19,7 @@ export default function AboutPage(): React.JSX.Element {
     <>
       <PageHeader
         title="关于与版本"
-        subtitle={appInfo ? `${appInfo.name} v${appInfo.version}` : 'CMake / VSCode 工程配置器'}
+        subtitle={appInfo ? `${appInfo.name} v${appInfo.version}` : 'CV Studio'}
         actions={
           <>
             <Button size="sm" onClick={() => void openHelp()}>
@@ -63,7 +63,7 @@ export default function AboutPage(): React.JSX.Element {
             <div>
               · 设置 / 模板 / 写入快照都在{' '}
               <span className="mono">
-                {appInfo?.userData ?? '%APPDATA%\\CMake-VSCode-Configurator'}
+                {appInfo?.userData ?? '%APPDATA%\\CV Studio'}
               </span>
             </div>
             <div>· 卸载或删掉这个目录，不会影响任何工程</div>

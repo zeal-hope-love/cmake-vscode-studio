@@ -156,7 +156,7 @@ export default function HistoryPage(): React.JSX.Element {
       <PageBody>
         <Alert kind="info">
           记录存在应用自己的数据目录里（不在你的工程里），最多保留 500 条。 存储位置：
-          <span className="mono">%APPDATA%\CMake-VSCode-Configurator\history.json</span>
+          <span className="mono">%APPDATA%\CV Studio\history.json</span>
         </Alert>
 
         <Card

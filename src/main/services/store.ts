@@ -8,43 +8,58 @@ import { dirname, join } from 'node:path'
 import { app } from 'electron'
 
 /**
- * package.json 补上 productName 之前用过的数据目录名。
+ * 历史上用过的数据目录名，**由新到旧**排列。
  *
  * 背景：Electron 的 `app.getName()` 优先取 `productName`，而 userData 目录名就是它。
- * 早期 package.json 只有 `name: cmake-vscode-studio`，所以数据都存在那个目录里；
- * 后来为了让 exe 属性和应用内显示一致，补上了 `productName: CMake-VSCode-Configurator`，
- * userData 就变成了新目录 —— 这里负责把老目录的数据搬过去，别让用户的设置凭空消失。
+ * 名字改过几次，每次都会换一个数据目录 —— 这里负责把老目录的数据搬过来，
+ * 别让用户的设置、模板、快照凭空消失。
+ *
+ * | 时期 | 目录名 | 原因 |
+ * |---|---|---|
+ * | 最早 | `cmake-vscode-studio` | 当时 package.json 只有 `name` |
+ * | v1.x | `CMake-VSCode-Configurator` | 补了 `productName`，让 exe 属性和界面一致 |
+ * | v2 起 | `CV Studio` | 改名（当前，即 `app.getPath('userData')`） |
+ *
+ * 顺序很重要：**新的排前面**。迁移时从最近的旧目录开始找，找到有数据的那一个就搬，
+ * 这样连续改过两轮名字的用户也能一次搬到位。
  */
-const LEGACY_DIR_NAME = 'cmake-vscode-studio'
+const LEGACY_DIR_NAMES = ['CMake-VSCode-Configurator', 'cmake-vscode-studio']
 
 /** 我们自己的东西；只搬这几个，不碰 Electron 的缓存目录 */
-const OUR_ITEMS = ['settings.json', 'templates.json', 'snapshots']
+const OUR_ITEMS = ['settings.json', 'templates.json', 'snapshots', 'history.json']
 
 let cachedDir: string | null = null
 
 function resolveUserDataDir(): string {
   const target = app.getPath('userData')
-  const legacy = join(app.getPath('appData'), LEGACY_DIR_NAME)
+  const appData = app.getPath('appData')
 
-  if (target.toLowerCase() === legacy.toLowerCase()) return target
-  if (!existsSync(join(legacy, 'settings.json'))) return target
+  // 当前目录里已有我们自己的文件 → 说明已经在用了，不用搬。
   // 注意：不能用「target 目录是否存在」来判断 —— Electron 启动时会先把 userData
   // 目录建出来（还有它自己的一堆缓存子目录），所以那个判断永远为真、迁移永远不执行。
-  // 要看的是「我们自己的文件在不在」。
   if (existsSync(join(target, 'settings.json'))) return target
 
-  try {
-    mkdirSync(target, { recursive: true })
-    for (const item of OUR_ITEMS) {
-      const from = join(legacy, item)
-      if (!existsSync(from)) continue
-      cpSync(from, join(target, item), { recursive: true, force: true })
+  // 按「由新到旧」找第一个有数据的旧目录
+  for (const name of LEGACY_DIR_NAMES) {
+    const legacy = join(appData, name)
+    if (legacy.toLowerCase() === target.toLowerCase()) continue
+    if (!existsSync(join(legacy, 'settings.json'))) continue
+
+    try {
+      mkdirSync(target, { recursive: true })
+      for (const item of OUR_ITEMS) {
+        const from = join(legacy, item)
+        if (!existsSync(from)) continue
+        cpSync(from, join(target, item), { recursive: true, force: true })
+      }
+      return target
+    } catch {
+      // 迁移失败就继续用那个老目录 —— 宁可不一致，也不能让用户丢设置
+      return legacy
     }
-    return target
-  } catch {
-    // 迁移失败就继续用老目录 —— 宁可不一致，也不能让用户丢设置
-    return legacy
   }
+
+  return target
 }
 
 export function userDataPath(...parts: string[]): string {

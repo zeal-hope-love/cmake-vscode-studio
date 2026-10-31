@@ -1,4 +1,4 @@
-# CMake / VSCode 工程配置器 —— 打包配置
+# CV Studio —— 打包配置
 # 文档：docs/DEVELOPMENT.md（含签名方案与版本管理）
 
 # exe 的版本资源是这样来的：
@@ -7,9 +7,19 @@
 #   文件说明                ← package.json 的 description
 #   公司名称 / 版权          ← package.json 的 author / 这里的 copyright
 # 改完 version 必须重新打包才会生效。应用内看版本：右上角「?」→ 最后一步「关于与版本」。
+#
+# ⚠️ 改 productName 会改 **用户数据目录名**（Electron 的 app.getName()），
+#    老数据靠 src/main/services/store.ts 里的 LEGACY_DIR_NAMES 自动迁移。
+#    从「CMake-VSCode-Configurator」改成「CV Studio」时已经加进那个列表，别删。
 
-appId: com.poxia.cmake-vscode-studio
-productName: CMake-VSCode-Configurator
+appId: com.poxia.cv-studio
+productName: CV Studio
+# 可执行文件名默认跟随 productName →「CV Studio.exe」，路径里带空格很别扭。
+# 显式指定成 CVStudio.exe：安装目录、快捷方式目标、命令行调用都干净。
+# 可执行文件名。默认跟随 productName →「CV Studio.exe」，这里显式写出来只是为了
+# 让意图明确（安装目录、快捷方式目标、任务管理器里的进程名都用它）。
+# 带空格没问题 —— VS Code 自己也是这样（Program Files\Microsoft VS Code\Code.exe）。
+executableName: CV Studio
 copyright: Copyright © 2026 PoXia
 
 directories:
@@ -38,7 +48,14 @@ win:
     # 绿色版单文件：自解压到 %TEMP% 再运行，不写注册表
     - target: portable
       arch: [x64]
-  artifactName: ${productName}-${version}-${arch}.${ext}
+  # 产物文件名 —— **不带空格**。
+  #
+  # 应用本身叫「CV Studio」（exe、安装目录、快捷方式、应用和功能里都是带空格的），
+  # 但**安装包文件名**是给人下载的：URL 里空格要编码成 %20，命令行和 gh release
+  # upload 里要处处加引号。所以这里固定用首字母大写的全称。
+  #   CV Studio-1.3.4-x64.exe   ← 不要
+  #   CmakeVscodeStudio-1.3.4-x64.exe ← 要这个
+  artifactName: CmakeVscodeStudio-${version}-${arch}.${ext}
   # 应用图标：exe、任务栏、开始菜单、桌面快捷方式都用它。
   # 由 tools/make-icons.py 生成（多尺寸 16/24/32/48/64/128/256，每个尺寸独立渲染）。
   icon: resources/icon.ico
@@ -86,11 +103,11 @@ nsis:
   # 快捷方式的文件名。**不能带斜杠** —— `CMake / VSCode 工程配置器` 这种写法
   # Windows 建不出 .lnk（/ 在文件名里非法），结果是桌面和开始菜单里什么都没有，
   # 而且打包时不报错，很难发现。真要显示斜杠只能走 uninstallDisplayName 那种纯显示字符串。
-  shortcutName: CMake VSCode 工程配置器
+  shortcutName: CV Studio
   # 「应用和功能」/「程序和功能」里显示的名字。
-  # 只影响显示文字，不影响安装目录和用户数据目录 —— 那两个由 productName 决定，
-  # 改了会让老用户丢配置，所以别动 productName。
-  uninstallDisplayName: CMake / VSCode 工程配置器
+  # 只影响显示文字，不影响安装目录；安装目录由 productName 决定（→「CV Studio」），
+  # 用户数据目录也跟着 productName 走，老数据由 store.ts 的 LEGACY_DIR_NAMES 迁移。
+  uninstallDisplayName: CV Studio
   # 安装器自身的图标（安装包 exe 图标、向导窗口、卸载器）
   installerIcon: resources/icon.ico
   uninstallerIcon: resources/icon.ico
@@ -104,7 +121,7 @@ nsis:
   language: "2052"
 
 portable:
-  artifactName: ${productName}-${version}-portable.${ext}
+  artifactName: CmakeVscodeStudio-${version}-portable.${ext}
 
 compression: maximum
 asar: true

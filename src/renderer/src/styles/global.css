@@ -1,5 +1,5 @@
 /* ==========================================================================
-   CMake / VSCode 工程配置器 —— 全局样式
+   CV Studio —— 全局样式
    深色为默认主题，浅色通过 html[data-theme='light'] 覆盖 CSS 变量
    ========================================================================== */
 
@@ -29,6 +29,14 @@
   --titlebar-h: 38px;
   --sidebar-w: 214px;
   --statusbar-h: 28px;
+  /*
+   * 缓动曲线（全站统一）
+   *   --ease-out  : 快进慢出，小位移/淡入淡出用它  —— 起步利落、收尾无拖尾
+   *   --ease-inout: 进出都柔和，只用于「展开/收起」这类大块位移
+   * 数值是业界通用的 ease-out-expo / ease-in-out-cubic，不是随手编的。
+   */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-inout: cubic-bezier(0.65, 0, 0.35, 1);
   --font: 'Segoe UI', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
   --mono: 'Cascadia Mono', 'Consolas', 'JetBrains Mono', 'Courier New', monospace;
 }
@@ -225,7 +233,17 @@ textarea {
   font-weight: 600;
 }
 
+/*
+ * 导航项
+ *
+ * 左侧那条 2px 高亮竖条是「选中态」的视觉锚点 —— 比单纯变色更能一眼定位当前位置。
+ * 它用 ::before 画，默认 scaleY(0) 收成一条线，选中时展开成整高，
+ * 切换时是「长出来」而不是「突然出现」，这就是克制的高级感来源。
+ *
+ * 竖条常驻在 DOM 里（只是缩放为 0），所以切换时能过渡；如果改成条件渲染就没有过渡了。
+ */
 .navitem {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -238,8 +256,22 @@ textarea {
   width: 100%;
   text-align: left;
   transition:
-    background 0.12s,
-    color 0.12s;
+    background 0.14s var(--ease-out),
+    color 0.14s var(--ease-out),
+    padding-left 0.14s var(--ease-out);
+}
+
+.navitem::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 2px;
+  height: 16px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+  transform: translateY(-50%) scaleY(0);
+  transition: transform 0.16s var(--ease-out);
 }
 
 .navitem:hover {
@@ -251,6 +283,12 @@ textarea {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
+  /* 选中时正文往右让 2px 给竖条，视觉上「被点亮」 */
+  padding-left: 12px;
+}
+
+.navitem--active::before {
+  transform: translateY(-50%) scaleY(1);
 }
 
 .navitem__icon {
@@ -287,10 +325,19 @@ textarea {
   gap: 14px;
 }
 
+/*
+ * 字号刻度（刻意只拉开「标题」和「正文」的差，正文一律不动）
+ *
+ * 之前 8 个档位全挤在 10~13px、相邻只差 0.5px，眼睛分辨不出，看着就「全都一样小」、
+ * 显得平。这里只把标题抬两档，行高和间距保持不变 —— 观感松快，但不会变挤。
+ *
+ *   页面主标题 18px  >  卡片标题 13.5px  >  正文 12.5px  >  角标 10~11px
+ */
 .main__title {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 650;
   margin: 0;
+  letter-spacing: -0.01em; /* 标题字大了一号，收紧一点字距，避免显得松散 */
 }
 
 .main__subtitle {
@@ -313,6 +360,42 @@ textarea {
   overflow-y: auto;
   padding: 16px 18px 28px;
   min-height: 0;
+}
+
+/*
+ * 页面切换：淡入 + 6px 上浮。
+ * 每次切页 React 会重建这一层，动画自然重放，不需要额外状态。
+ * 160ms 是「能感觉到但不会等」的长度；位移只有 6px，克制，不抢注意力。
+ *
+ * 用 animation 而不是 transition：这个元素是重新挂载的，没有「上一个状态」可以过渡。
+ */
+.page-enter {
+  animation: page-in 0.16s var(--ease-out) both;
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/*
+ * 尊重系统的「减少动态效果」设置。
+ * 有些用户（以及晕动症患者）会在 Windows 里关掉动画 —— 那时不应该强行播。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .page-enter {
+    animation: none;
+  }
+  .btn,
+  .navitem {
+    transition: none;
+  }
 }
 
 .statusbar {
@@ -378,7 +461,7 @@ textarea {
 
 .card__title {
   font-weight: 620;
-  font-size: 13px;
+  font-size: 13.5px;
 }
 
 .card__hint {
@@ -439,6 +522,10 @@ textarea {
    按钮
    ========================================================================== */
 
+/*
+ * 缓动曲线：--ease-out 是「快进慢出」，起步快、收尾稳，中文界面里小位移用它最自然。
+ * 全站统一这一条，比各处用默认的 ease 要有质感得多（默认 ease 结尾拖泥带水）。
+ */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -451,9 +538,12 @@ textarea {
   cursor: pointer;
   white-space: nowrap;
   transition:
-    background 0.12s,
-    border-color 0.12s,
-    opacity 0.12s;
+    background 0.12s var(--ease-out),
+    border-color 0.12s var(--ease-out),
+    color 0.12s var(--ease-out),
+    opacity 0.12s var(--ease-out),
+    transform 0.1s var(--ease-out),
+    box-shadow 0.15s var(--ease-out);
 }
 
 .btn:hover:not(:disabled) {
@@ -461,20 +551,43 @@ textarea {
   border-color: var(--text-faint);
 }
 
+/*
+ * 按下时轻微下沉 —— 1px 足够，多了会像抖动。
+ * 这是「手感」的来源：点击有反馈，比只变色更像真实的按钮。
+ */
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
 .btn:disabled {
   opacity: 0.42;
   cursor: not-allowed;
 }
 
+/*
+ * 主按钮（「写入配置」「构建」「开始安装」这类真正的主动作）。
+ *
+ * 之前它只换了颜色、尺寸和普通按钮一样，视觉重量不够 —— 一屏里看不出该点哪个。
+ * 这里**放大一号**（padding 5/11 → 7/14），让主次一眼分明。
+ * 只改 padding 不改 font-size：按钮变大了但字没变大，不会破坏整页的字号节奏。
+ */
 .btn--primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
   font-weight: 600;
+  padding: 7px 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+.btn--primary:active:not(:disabled) {
+  /* 主按钮有阴影，按下去时收掉阴影 + 下沉，比单纯位移更有按压感 */
+  transform: translateY(1px);
+  box-shadow: none;
 }
 .btn--primary:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+  box-shadow: 0 2px 8px rgba(79, 142, 247, 0.35); /* hover 时透出一点主色光晕，强调「这是主操作」 */
 }
 
 .btn--danger {

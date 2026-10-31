@@ -21,7 +21,8 @@ export function PageHeader(props: {
 }
 
 export function PageBody(props: { children: React.ReactNode }): React.JSX.Element {
-  return <div className="main__content">{props.children}</div>
+  // page-enter：切页时淡入 + 轻上浮。用 key 不在这里设，靠页面切换时重新挂载重放动画。
+  return <div className="main__content page-enter">{props.children}</div>
 }
 
 // --------------------------------------------------------------------------

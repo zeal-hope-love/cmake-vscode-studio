@@ -9,7 +9,7 @@
  * 把 exe 复制到一个普通目录再双击就完全正常。这个脚本就是干这件事的。
  *
  * 用法：npm run dist:copy [目标目录]
- *   默认目标：%USERPROFILE%\Desktop\CMakeVSCodeConfigurator-release
+ *   默认目标：%USERPROFILE%\Desktop\CVStudio-release
  */
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -23,7 +23,7 @@ if (!existsSync(src)) {
 
 const dest = process.argv[2]
   ? resolve(process.argv[2])
-  : join(homedir(), 'Desktop', 'CMakeVSCodeConfigurator-release')
+  : join(homedir(), 'Desktop', 'CVStudio-release')
 
 mkdirSync(dest, { recursive: true })
 

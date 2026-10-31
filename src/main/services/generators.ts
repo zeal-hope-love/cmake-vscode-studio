@@ -534,7 +534,7 @@ export function generateOpenocdCfg(
   if (!probe.needsOpenocdCfg || !o.targetCfg) return null
 
   const lines = [
-    '# 由 CMake / VSCode 工程配置器生成',
+    '# 由 CV Studio 生成',
     `# 探针: ${probe.label}`,
     `# 目标: ${o.device || '未识别'}`,
     '',

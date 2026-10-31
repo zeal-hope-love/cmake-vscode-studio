@@ -291,7 +291,7 @@ function patchFreertos(
 
   const snippet = [
     '',
-    '  /* --- vofa 在线调参任务（由 CMake / VSCode 工程配置器添加）--- */',
+    '  /* --- vofa 在线调参任务（由 CV Studio 添加）--- */',
     '  osThreadDef(vofa, vofa_task, osPriorityNormal, 0, 512);',
     '  osThreadCreate(osThread(vofa), NULL);'
   ].join('\n')
@@ -326,7 +326,7 @@ function patchDefine(
   }
   const block = [
     '',
-    '/* 由 CMake / VSCode 工程配置器添加：关掉 SBUS 往 USART1 的转发，',
+    '/* 由 CV Studio 添加：关掉 SBUS 往 USART1 的转发，',
     '   把 USART1 的 TX 让给 vofa 波形用。想恢复改成 1 即可。 */',
     `#define ${name} ${value}`
   ].join('\n')
