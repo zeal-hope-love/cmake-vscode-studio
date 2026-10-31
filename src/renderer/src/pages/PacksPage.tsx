@@ -27,6 +27,7 @@ import {
   PageBody,
   PageHeader,
   Select,
+  Spinner,
   TextInput
 } from '../components/ui'
 import { Icons } from '../components/icons'
@@ -268,28 +269,58 @@ export function PacksPage(): React.JSX.Element {
 
   return (
     <>
+      {/*
+        页头和「配置调试文件」保持一致的操作习惯：
+          · 左边：标题 + 一句「这个页面是干什么的」
+          · 右边：同样的按钮顺序 —— 打开类 → 主操作（primary）
+
+        以前这里只有孤零零一个「重新检查」，没有 primary，
+        和同级的「配置调试文件」页（三个按钮、最后一个是 primary）差别很大，
+        看着不像同一套产品里的页面。
+      */}
       <PageHeader
         title={pack?.name ?? '模块包'}
-        subtitle={
-          !hasProject
-            ? '还没有选择工程 · 可以先看模块说明和模板，装之前需要选一个工程'
-            : inspect
-              ? `检查 ${inspect.report.checks.length} 项` +
-                (errCount
-                  ? ` · ${errCount} 项致命`
-                  : isPortPack
-                    ? ' · 用「进入移植流程」'
-                    : ' · 可以装')
-              : '正在检查工程…'
-        }
+        subtitle={pack ? pack.summary : '还没有选择模块'}
         actions={
-          <Button onClick={() => void reload()} disabled={busy}>
-            {busy ? '处理中…' : '重新检查'}
-          </Button>
+          <>
+            {hasProject && project && (
+              <>
+                <Button size="sm" onClick={() => void window.api.openInVSCode(project.root)}>
+                  <Icons.vscode />
+                  在 VSCode 打开
+                </Button>
+                <Button size="sm" onClick={() => void window.api.openInExplorer(project.root)}>
+                  <Icons.folder />
+                  资源管理器
+                </Button>
+              </>
+            )}
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => void reload()}
+              disabled={busy || !hasProject}
+              title={hasProject ? '重新扫描工程，刷新兼容性检查结果' : '先选一个工程'}
+            >
+              {busy ? <Spinner /> : <Icons.refresh />}
+              {busy ? '检查中…' : '重新检查'}
+            </Button>
+          </>
         }
       />
 
       <PageBody>
+        {/* 检查结论单独一行小字，不塞进副标题 —— 副标题留给「这页干什么」 */}
+        {hasProject && inspect && (
+          <div className="small faint" style={{ marginBottom: 10 }}>
+            检查 {inspect.report.checks.length} 项
+            {errCount > 0
+              ? `，其中 ${errCount} 项需要先处理`
+              : isPortPack
+                ? '，都没有问题 —— 点下面的「进入移植流程」开始'
+                : '，都没有问题 —— 可以直接装'}
+          </div>
+        )}
         {/* ---- 模块简介 ----
             以前这里是个「选模块」下拉框，但用户进这一页之前已经在左边导航
             点过具体哪个模块了，再让他选一次纯属重复。现在只显示当前模块的
@@ -336,7 +367,7 @@ export function PacksPage(): React.JSX.Element {
         {/* ---- ② 兼容性 ---- */}
         {inspect && (
           <Card
-            title="② 兼容性检查"
+            title="兼容性检查"
             hint="只读，还没动任何文件"
             actions={
               inspect.report.blocked ? (
@@ -402,7 +433,7 @@ export function PacksPage(): React.JSX.Element {
 
         {/* ---- ③ 参数 ---- */}
         {pack && (
-          <Card title="③ 参数" hint="大部分是探测出来的，一般不用手改">
+          <Card title="参数" hint="大部分是探测出来的，一般不用手改">
             <div className="grid grid--3">
               {pack.params.map((def) => (
                 <Field key={def.key} label={def.label} hint={def.hint}>
@@ -456,7 +487,7 @@ export function PacksPage(): React.JSX.Element {
         {/* 只有声明了 onlineTuning 的包才显示 —— 这是 VOFA+ 特有的能力，
             遥控模块 VT13 用不上，无条件显示等于误导。 */}
         {inspect && features.includes('onlineTuning') && (
-          <Card title="④ 调参目标（在线改）" hint="勾一个 = 一键注册一整组 Kp/Ki/Kd/max_out/max_iout">
+          <Card title="调参目标（在线改）" hint="勾一个 = 一键注册一整组 Kp/Ki/Kd/max_out/max_iout">
             <div className="faint small mb-12">
               下面是**从工程里扫出来的** PID 结构体。点「用这个」自动填好表达式，表达式可以改 （比如把
               yaw 改成 pitch）。
@@ -558,7 +589,7 @@ export function PacksPage(): React.JSX.Element {
 
         {/* ---- ⑤ 监看通道 ---- */}
         {inspect && features.includes('waveform') && (
-          <Card title="⑤ 监看通道（画波形）" hint="顺序 = VOFA 里的 ch0、ch1…">
+          <Card title="监看通道（画波形）" hint="顺序 = VOFA 里的 ch0、ch1…">
             <div className="row mb-12">
               <Button size="sm" onClick={addRcPreset}>
                 加入遥控器通道（ch0-4 / s0-1）
@@ -645,7 +676,7 @@ export function PacksPage(): React.JSX.Element {
 
         {/* ---- ⑥ 改动清单 ---- */}
         <Card
-          title="⑥ 改动清单"
+          title="改动清单"
           hint="只算不写，看清楚了再落盘"
           actions={
             <div className="flex">

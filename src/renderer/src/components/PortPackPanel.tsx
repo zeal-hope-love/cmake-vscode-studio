@@ -182,6 +182,14 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
 
   return (
     <>
+      {/*
+        按钮顺序和同级的「配置调试文件」保持一致：
+          导航类（ghost）→ 刷新类（默认）→ 主操作（primary，最右）
+
+        以前「换一个模块」和「重新预检」都是 ghost，
+        而「配置调试文件」页相同位置用的是默认样式 —— 三个同级页面
+        的按钮长相不一样，看着不像一套产品。
+      */}
       <PageHeader
         title={pack.name}
         subtitle={pack.summary}
@@ -192,7 +200,6 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
             </Button>
             <Button
               size="sm"
-              variant="ghost"
               disabled={checking || running}
               onClick={() => void doPreflight()}
             >
