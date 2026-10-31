@@ -191,7 +191,24 @@ app.whenReady().then(() => {
 
   ipcMain.handle(IPC.windowSetTheme, async (_e, theme: AppSettings['theme']): Promise<void> => {
     applyWindowTheme(theme)
-    saveSettings({ theme })
+    /*
+     * 再落盘，**失败也不抛**。
+     *
+     * 这里是启动时必经之路（bootstrap 会调一次来同步标题栏配色），而启动瞬间
+     * 恰好是 Electron 各子进程抢 settings.json 最凶的时候。让一个「配色偏好
+     * 没存上」的小问题把整个启动流程打成红色报错，代价和收益完全不成比例。
+     *
+     * 用户主动在菜单里改主题时走的是渲染进程的 setTheme，那边会把失败
+     * 用 toast 告诉他；这里只是启动同步，静默降级即可。
+     */
+    try {
+      saveSettings({ theme })
+    } catch (err) {
+      console.warn(
+        '[theme] 配色偏好没存上（不影响使用）：',
+        err instanceof Error ? err.message : err
+      )
+    }
   })
 
   createWindow()

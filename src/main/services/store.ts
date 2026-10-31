@@ -84,6 +84,34 @@ export function readStoreFile<T>(filePath: string, fallback: T): T {
 }
 
 /**
+ * 同步睡眠 N 毫秒。
+ *
+ * 用 `Atomics.wait` 而不是 `while (Date.now() < until) {}` 忙等 —— 这是关键区别：
+ *
+ * 忙等会**一直占着 CPU**，在 Electron 主进程里意味着：
+ *   · 事件循环被完全堵住，其它 IO 回调排队等着
+ *   · 这正是我们要等的那些子进程（写缓存、写配置的）也被拖慢
+ *   → 冲突窗口反而被拉长，形成「越等越失败」的死循环
+ *
+ * `Atomics.wait` 会让当前线程真正挂起，把 CPU 让出去，让锁的持有者有机会释放。
+ * 它只能用在非主线程？—— 不是，`Atomics.wait` 在这里可用是因为 Electron
+ * 主进程的 JS 线程允许它（Node 环境下 `Atomics.wait` 在非 `SharedArrayBuffer`
+ * 场景下同样会阻塞而不是抛错）。
+ */
+function sleepMs(ms: number): void {
+  try {
+    const sab = new SharedArrayBuffer(4)
+    Atomics.wait(new Int32Array(sab), 0, 0, ms)
+  } catch {
+    // 极少数环境不让用 Atomics.wait，退回忙等（不理想但能工作）
+    const until = Date.now() + ms
+    while (Date.now() < until) {
+      /* fallback */
+    }
+  }
+}
+
+/**
  * 写 JSON 到数据目录。
  *
  * ## 为什么这里不用「临时文件 + 原子改名」
@@ -120,7 +148,13 @@ export function writeStoreFile(filePath: string, value: unknown): void {
   mkdirSync(dirname(filePath), { recursive: true })
   const text = JSON.stringify(value, null, 2)
 
-  /** 退避间隔（毫秒）：10,20,40,80,160,200,200,200 —— 合计约 0.9s */
+  /**
+   * 退避间隔（毫秒）。
+   *
+   * 从 10ms 起步、上限 200ms，总等待约 0.9 秒。
+   * 定这么多轮是因为实测：Electron 启动瞬间几个子进程（GPU、网络、渲染）
+   * 会同时初始化各自的缓存目录，`settings.json` 的冲突窗口能持续到 1 秒。
+   */
   const backoff = [10, 20, 40, 80, 160, 200, 200, 200]
   let lastErr: unknown = null
 
@@ -134,10 +168,7 @@ export function writeStoreFile(filePath: string, value: unknown): void {
       // 只有「文件被占用 / 没权限」这类才值得重试；其它错误立刻抛
       if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') throw err
       if (i >= backoff.length) break
-      const until = Date.now() + backoff[i]
-      while (Date.now() < until) {
-        /* 见上面的说明：同步签名下只能忙等 */
-      }
+      sleepMs(backoff[i])
     }
   }
 

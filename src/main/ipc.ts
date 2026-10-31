@@ -196,7 +196,21 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       const base = defaultGenOptions(project, tools, settings)
       const options: GenOptions = { ...base, ...pruneUndefined(overrides) }
       const bundle = generateBundle(project, options)
-      rememberProject(project.root)
+      /*
+       * 记住「最近工程」是锦上添花，**失败了不能让打开工程这件事跟着失败**。
+       *
+       * 实测踩过：启动瞬间配置文件被抢，rememberProject 抛 EPERM，
+       * 整个 project:load 挂掉，界面弹「载入失败」—— 用户看到的就是
+       * 「打不开工程」，实际上工程数据早就算好了，只是最后记一笔失败而已。
+       */
+      try {
+        rememberProject(project.root)
+      } catch (err) {
+        console.warn(
+          '[project] 没能记进「最近工程」（不影响打开）：',
+          err instanceof Error ? err.message : err
+        )
+      }
       return { project, tools, options, bundle }
     }
   )
