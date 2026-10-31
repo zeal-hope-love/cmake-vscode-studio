@@ -128,6 +128,9 @@ export interface PackManifest {
   /** 这个包提供哪些可选能力；不写等于都没有 */
   features?: PackFeature[]
 
+  /** 包里自带的默认模板；用户另存的模板与它们并列显示 */
+  defaultPresets?: import('./templateFormat').PackDefaultPreset[]
+
   // ---- 移植包专属（可选）----
   /** 业务文件的字段替换 */
   transform?: PackTransformSpec[]

@@ -111,5 +111,17 @@
   "features": [
     "onlineTuning",
     "waveform"
+  ],
+  "defaultPresets": [
+    {
+      "name": "标准配置（115200 / 50Hz）",
+      "note": "最常用的一套：串口 115200，波形 50Hz。上车先用这个跑通，再按需调。",
+      "params": {
+        "uart": "huart1",
+        "sendHz": 50,
+        "rxMode": "it",
+        "builtinIrq": true
+      }
+    }
   ]
 }

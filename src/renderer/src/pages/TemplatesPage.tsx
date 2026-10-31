@@ -462,6 +462,21 @@ export default function TemplatesPage(): React.JSX.Element {
                     <div className="grow">
                       <div className="small">
                         {p.name}
+                        {/* 内置模板带个标签，让人知道这个是跟着包来的 */}
+                        {p.builtin && (
+                          <span
+                            className="mono faint"
+                            style={{
+                              marginLeft: 8,
+                              fontSize: 11,
+                              border: '1px solid var(--border)',
+                              borderRadius: 4,
+                              padding: '0 5px'
+                            }}
+                          >
+                            内置
+                          </span>
+                        )}
                         <span className="faint"> · </span>
                         <span className="mono faint">{p.packId}</span>
                       </div>
@@ -483,18 +498,24 @@ export default function TemplatesPage(): React.JSX.Element {
                     >
                       导出
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        void window.api.deletePackPreset(p.id).then((list) => {
-                          setPresets(list)
-                          notify('ok', `已删除模板「${p.name}」`)
-                        })
-                      }}
-                    >
-                      删除
-                    </Button>
+                    {p.builtin ? (
+                      <Button size="sm" variant="ghost" disabled title="内置模板跟着模块包走，不能删除">
+                        不可删除
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          void window.api.deletePackPreset(p.id).then((list) => {
+                            setPresets(list)
+                            notify('ok', `已删除模板「${p.name}」`)
+                          })
+                        }}
+                      >
+                        删除
+                      </Button>
+                    )}
                   </div>
                 ))}
               </div>

@@ -12,7 +12,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { buildTemplateFile, parseTemplateFile, TEMPLATE_FORMAT_DOC } from '../src/shared/templateFormat'
+import { buildTemplateFile, parseTemplateFile, TEMPLATE_FORMAT_DOC, isBuiltinPresetId } from '../src/shared/templateFormat'
+import { listBuiltinPackPresets } from '../src/main/services/packPresetStore'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -1998,6 +1999,55 @@ const samplePreset = {
   check('格式说明: 提到 packId 必须已安装', TEMPLATE_FORMAT_DOC.includes('packId'))
 }
 } // end 17
+
+// ==========================================================================
+// 18. 模块包内置模板
+//
+// 每个包在 pack.json 里自带几套默认配置，用户另存的与它们并列。
+// 内置的不可删改（想改就另存一份）。
+// ==========================================================================
+
+{
+  section('18. 模块包内置模板')
+
+  const allBuiltin = listBuiltinPackPresets()
+  check('内置模板: 至少有一个模块包带了默认模板', allBuiltin.length > 0, `共 ${allBuiltin.length} 个`)
+
+  const vt13Builtin = listBuiltinPackPresets('remote-vt13')
+  check('内置模板: VT13 自带至少 1 个', vt13Builtin.length >= 1, `共 ${vt13Builtin.length} 个`)
+
+  const vofaBuiltin = listBuiltinPackPresets('vofa')
+  check('内置模板: VOFA 自带至少 1 个', vofaBuiltin.length >= 1, `共 ${vofaBuiltin.length} 个`)
+
+  check(
+    '内置模板: 所有内置模板都标了 builtin',
+    allBuiltin.every((p) => p.builtin === true)
+  )
+  check(
+    '内置模板: id 都带 __builtin__ 前缀',
+    allBuiltin.every((p) => isBuiltinPresetId(p.id))
+  )
+  check(
+    '内置模板: id 不重复',
+    new Set(allBuiltin.map((p) => p.id)).size === allBuiltin.length
+  )
+  check(
+    '内置模板: 都归属到真实的模块包',
+    allBuiltin.every((p) => p.packId === 'remote-vt13' || p.packId === 'vofa')
+  )
+  check(
+    '内置模板: 参数非空',
+    allBuiltin.every((p) => Object.keys(p.params).length > 0)
+  )
+  check(
+    '内置模板: VT13 有一个「跳过 CubeMX」的选项',
+    vt13Builtin.some((p) => p.params['demoMode'] === true)
+  )
+  check(
+    '内置模板: isBuiltinPresetId 能区分用户模板',
+    !isBuiltinPresetId('a1b2c3d4-user-made')
+  )
+}
 
 // ==========================================================================
 

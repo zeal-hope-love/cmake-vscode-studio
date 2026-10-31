@@ -270,16 +270,21 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
             <Button size="sm" disabled={running} onClick={() => void savePreset()}>
               存下来
             </Button>
-            {activePresetId && (
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={running}
-                onClick={() => void deletePreset(activePresetId)}
-              >
-                删除
-              </Button>
-            )}
+            {activePresetId &&
+              (presets.find((p) => p.id === activePresetId)?.builtin ? (
+                <Button size="sm" variant="ghost" disabled title="内置模板跟着模块包走，不能删除">
+                  不可删除
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={running}
+                  onClick={() => void deletePreset(activePresetId)}
+                >
+                  删除
+                </Button>
+              ))}
           </div>
           <div className="small faint" style={{ marginBottom: 12 }}>
             模板只影响下面的开关，不记录工程本身的路径。想分享给队友就「存下来」，

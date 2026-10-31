@@ -149,5 +149,23 @@
     "烧录后如果遥控无反应：先看「检查与清理」里 USART1 有没有报错，再确认 `.ioc` 里 DMA 是 NORMAL 模式",
     "回到旧版本：用「历史与恢复」里的快照还原（工具在动任何文件前会自动存快照）"
   ],
-  "features": []
+  "features": [],
+  "defaultPresets": [
+    {
+      "name": "标准移植（USART1 + CubeMX）",
+      "note": "完整流程：改 .ioc、调 CubeMX 重新生成、再改代码。第一次移植用这个。",
+      "params": {
+        "usart": "USART1",
+        "demoMode": false
+      }
+    },
+    {
+      "name": "只改代码（跳过 CubeMX）",
+      "note": "外设已经手动配好了，或者机器上没装 CubeMX 时用。只做代码替换和改造。",
+      "params": {
+        "usart": "USART1",
+        "demoMode": true
+      }
+    }
+  ]
 }

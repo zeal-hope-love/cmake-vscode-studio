@@ -11,21 +11,55 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import type { PackPreset } from '@shared/templateFormat'
+import {
+  toBuiltinPreset,
+  type PackPreset
+} from '@shared/templateFormat'
+import { listPacks } from './packStore'
 import { readStoreFile, userDataPath, writeStoreFile } from './store'
 
 function presetFile(): string {
   return userDataPath('pack-presets.json')
 }
 
-export function listPackPresets(): PackPreset[] {
+/** 用户自己存的那部分（不含内置） */
+export function listUserPackPresets(): PackPreset[] {
   const list = readStoreFile<PackPreset[]>(presetFile(), [])
   return Array.isArray(list) ? list : []
 }
 
-/** 只列某个模块包的模板 */
+/**
+ * 把每个模块包自带的内置模板展开成 PackPreset。
+ *
+ * 每次现算而不是落盘 —— 内置模板跟着程序版本走，
+ * 落盘的话升级包就要处理「旧的默认模板要不要更新」这种麻烦事。
+ */
+export function listBuiltinPackPresets(packId?: string): PackPreset[] {
+  const out: PackPreset[] = []
+  for (const pack of listPacks()) {
+    if (packId && pack.id !== packId) continue
+    ;(pack.defaultPresets ?? []).forEach((def, i) => {
+      out.push(toBuiltinPreset(pack.id, def, i))
+    })
+  }
+  return out
+}
+
+/**
+ * 全部模板：内置在前，用户存的在后。
+ *
+ * 顺序有意义 —— 用户扫列表时先看到「官方推荐的那套」，
+ * 再看到自己攒的，符合认知顺序。
+ */
+export function listPackPresets(packId?: string): PackPreset[] {
+  const builtin = listBuiltinPackPresets(packId)
+  const user = listUserPackPresets().filter((p) => !packId || p.packId === packId)
+  return [...builtin, ...user]
+}
+
+/** 只列某个模块包的模板（内置 + 自定义） */
 export function listPackPresetsFor(packId: string): PackPreset[] {
-  return listPackPresets().filter((p) => p.packId === packId)
+  return listPackPresets(packId)
 }
 
 export function getPackPreset(id: string): PackPreset | null {
@@ -36,10 +70,10 @@ export function getPackPreset(id: string): PackPreset | null {
  * 存一个模板。
  *
  * `id` 为空表示新建（生成新 UUID）；非空表示覆盖同 id 的。
- * 名字不做唯一性约束 —— 用户可能想存两个「标准步兵」再做对比。
+ * 名字不做唯一性约束 —— 用户可能想存两个「标准步兵」做对比。
  */
 export function savePackPreset(input: PackPreset): PackPreset[] {
-  const list = listPackPresets()
+  const list = listUserPackPresets()
   const now = Date.now()
   const preset: PackPreset = {
     ...input,
@@ -53,11 +87,17 @@ export function savePackPreset(input: PackPreset): PackPreset[] {
   else list.push(preset)
 
   writeStoreFile(presetFile(), list)
-  return list
+  return listPackPresets()
 }
 
+/**
+ * 删一个模板。
+ *
+ * 内置模板不允许删 —— 静默忽略，不报错。
+ * 界面那边也会把「删除」按钮禁掉，这里是第二道防线。
+ */
 export function deletePackPreset(id: string): PackPreset[] {
-  const list = listPackPresets().filter((p) => p.id !== id)
+  const list = listUserPackPresets().filter((p) => p.id !== id)
   writeStoreFile(presetFile(), list)
-  return list
+  return listPackPresets()
 }

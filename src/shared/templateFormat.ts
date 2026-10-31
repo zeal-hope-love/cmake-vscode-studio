@@ -41,6 +41,13 @@ export interface PackPreset {
   createdAt: number
   updatedAt: number
 
+  /**
+   * 内置模板：跟着模块包走，不可删改。
+   *
+   * 用户想「改一改再用」就另存一份 —— 另存的自然是 builtin: false。
+   */
+  builtin?: boolean
+
   /** 用户在「参数」卡片里选的配置 */
   params: Record<string, string | number | boolean>
 
@@ -55,6 +62,51 @@ export interface PackPreset {
     channels?: ChannelBinding[]
     /** 是否移除旧的 vofa 文件 */
     removeLegacy?: boolean
+  }
+}
+
+/**
+ * 模块包内置的默认模板（写在 pack.json 的 `defaultPresets` 里）。
+ *
+ * 不带 id / 时间戳 —— 它跟着程序走，不是用户数据。
+ * 运行时由 `toBuiltinPreset()` 转成带 `builtin: true` 的 PackPreset。
+ */
+export interface PackDefaultPreset {
+  name: string
+  note?: string
+  params: Record<string, string | number | boolean>
+  binds?: PackPreset['binds']
+}
+
+/** 内置模板在列表里的 id 前缀，用来和用户存的区分 */
+export const BUILTIN_PRESET_PREFIX = '__builtin__:'
+
+/** 判断是不是内置模板的 id */
+export function isBuiltinPresetId(id: string): boolean {
+  return id.startsWith(BUILTIN_PRESET_PREFIX)
+}
+
+/**
+ * 把 pack.json 里的默认模板转成统一的 PackPreset。
+ *
+ * id 用 `__builtin__:<packId>:<序号>` —— 稳定、可预测，
+ * 界面拿它做下拉的 value 时不会因为刷新而变化。
+ */
+export function toBuiltinPreset(
+  packId: string,
+  def: PackDefaultPreset,
+  index: number
+): PackPreset {
+  return {
+    id: `${BUILTIN_PRESET_PREFIX}${packId}:${index}`,
+    packId,
+    name: def.name,
+    note: def.note ?? '',
+    createdAt: 0,
+    updatedAt: 0,
+    builtin: true,
+    params: def.params,
+    binds: def.binds
   }
 }
 
