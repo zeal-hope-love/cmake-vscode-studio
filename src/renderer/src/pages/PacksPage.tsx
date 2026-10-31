@@ -100,6 +100,14 @@ export function PacksPage(): React.JSX.Element {
   const isPortPack = Boolean(pack && (pack.iocChanges || pack.stateMachine))
   const [portMode, setPortMode] = React.useState(false)
 
+  /**
+   * 当前包声明提供的能力。
+   *
+   * 「在线调参」「监看通道」这两块是 VOFA+ 特有的，遥控模块 VT13 根本用不上。
+   * 以前无条件渲染，才会出现「遥控下面写着调参」这种看着很怪的情况。
+   */
+  const features = pack?.features ?? []
+
   // ---- 装载包列表（store 里已有就直接用）----
   React.useEffect(() => {
     if (packs.length === 0) void refreshPacks()
@@ -303,23 +311,42 @@ export function PacksPage(): React.JSX.Element {
             <div className="list">
               {inspect.report.checks.map((c, i) => {
                 const s = LEVEL_STYLE[c.level] ?? LEVEL_STYLE.info
+                /*
+                 * 紧凑布局：图标 + 标题 + 详情**挤在一行**。
+                 *
+                 * 原来图标单独占一行、标题一行、详情一行 —— 十几项检查就要滚两屏，
+                 * 而且「符号占一行」看着像断行。现在一行一条，扫一眼就能看完。
+                 * 详情的对齐靠右，不抢标题的注意力。
+                 */
                 return (
-                  <div key={i} className="list__row" style={{ alignItems: 'flex-start' }}>
+                  <div
+                    key={i}
+                    className="list__row"
+                    style={{ alignItems: 'baseline', gap: 8, paddingTop: 3, paddingBottom: 3 }}
+                  >
                     <span
                       className={`mono ${s.cls}`}
-                      style={{ width: 16, textAlign: 'center', flex: '0 0 auto' }}
+                      style={{ width: 14, textAlign: 'center', flex: '0 0 auto' }}
                     >
                       {s.mark}
                     </span>
-                    <div className="grow">
-                      <div className="small">{c.label}</div>
-                      <div className="faint small">{c.detail}</div>
-                      {c.adapted && (
-                        <div className="small" style={{ color: 'var(--accent)' }}>
-                          工具适配：{c.adapted}
-                        </div>
-                      )}
-                    </div>
+                    <span className="small" style={{ flex: '0 0 auto' }}>
+                      {c.label}
+                    </span>
+                    <span
+                      className="faint small"
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        textAlign: 'right',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}
+                      title={c.detail}
+                    >
+                      {c.adapted ? `工具适配：${c.adapted}` : c.detail}
+                    </span>
                   </div>
                 )
               })}
@@ -401,7 +428,9 @@ export function PacksPage(): React.JSX.Element {
         )}
 
         {/* ---- ④ 调参目标 ---- */}
-        {inspect && (
+        {/* 只有声明了 onlineTuning 的包才显示 —— 这是 VOFA+ 特有的能力，
+            遥控模块 VT13 用不上，无条件显示等于误导。 */}
+        {inspect && features.includes('onlineTuning') && (
           <Card title="④ 调参目标（在线改）" hint="勾一个 = 一键注册一整组 Kp/Ki/Kd/max_out/max_iout">
             <div className="faint small mb-12">
               下面是**从工程里扫出来的** PID 结构体。点「用这个」自动填好表达式，表达式可以改 （比如把
@@ -503,7 +532,7 @@ export function PacksPage(): React.JSX.Element {
         )}
 
         {/* ---- ⑤ 监看通道 ---- */}
-        {inspect && (
+        {inspect && features.includes('waveform') && (
           <Card title="⑤ 监看通道（画波形）" hint="顺序 = VOFA 里的 ch0、ch1…">
             <div className="row mb-12">
               <Button size="sm" onClick={addRcPreset}>

@@ -75,8 +75,20 @@ export function captureSnapshot(projectRoot: string, entries: SnapshotEntry[]): 
     writeFileSync(join(dir, `${id}.json`), JSON.stringify(snapshot), 'utf8')
     pruneOldSnapshots(dir)
     return id
-  } catch {
-    // 存不下快照不能挡住写入本身
+  } catch (err) {
+    /*
+     * 存不下快照不能挡住写入本身 —— 但**必须留下原因**。
+     *
+     * 早先这里是空 catch，于是移植流程里只显示「快照存不下，已中止」，
+     * 完全不知道是磁盘满了、权限不够、还是路径不对。用户拿这句话没法自救。
+     */
+    console.error('[snapshot] 存快照失败：', err instanceof Error ? err.message : err)
+    // projectDir 自己也可能抛（rootDir 没配），不能再让它把错误盖掉
+    try {
+      console.error('[snapshot] 目标目录：', projectDir(projectRoot))
+    } catch {
+      console.error('[snapshot] 快照根目录未配置（configureSnapshots 没调用？）')
+    }
     return null
   }
 }

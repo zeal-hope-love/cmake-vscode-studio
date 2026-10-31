@@ -25,7 +25,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import type { PackManifest } from '../../shared/packTypes'
 import { captureSnapshot, type SnapshotEntry } from './snapshotStore'
 import { recordWrite } from './historyStore'
@@ -96,9 +96,13 @@ function collectSnapshotEntries(root: string, pack: PackManifest, iocPath: strin
   }
 
   // ① .ioc
+  //
+  // 相对路径必须用 `path.relative` 算，不能自己拼字符串替换 ——
+  // 踩过：root 用反斜杠、拼出来的匹配串末尾是正斜杠，replace 匹配不上，
+  // 结果 rel 是一个完整绝对路径塞进快照。还原时按「工程内相对路径」去解析，
+  // 就会解析到工程外面去。
   if (iocPath) {
-    const rel = iocPath.replace(root.replace(/[\\/]+$/, '') + '/', '').replace(/\\/g, '/')
-    add(rel)
+    add(toRelative(root, iocPath))
   }
 
   // ② CubeMX 会写的地方：Src/ 和 Inc/ 下的全部源文件
@@ -125,6 +129,11 @@ function collectSnapshotEntries(root: string, pack: PackManifest, iocPath: strin
   add('CMakeLists.txt')
 
   return entries
+}
+
+/** 把绝对路径转成「相对工程根、正斜杠」的形式 */
+function toRelative(root: string, abs: string): string {
+  return relative(root, abs).replace(/\\/g, '/')
 }
 
 /** 把相对路径列表交给快照，返回快照 id */

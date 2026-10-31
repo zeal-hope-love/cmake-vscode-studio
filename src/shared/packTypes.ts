@@ -100,6 +100,18 @@ export interface PackRequires {
   symbols?: string[]
 }
 
+/**
+ * 模块包提供的能力。
+ *
+ * 之前那些卡片（④ 在线调参、⑤ 监看通道）是**无条件显示**的，
+ * 于是「遥控模块 VT13」下面也冒出「调参目标」「监看通道」—— 那两样是
+ * VOFA+ 特有的，VT13 根本用不上，纯属误导。
+ *
+ * 现在由每个包在 pack.json 里声明自己有什么，页面按声明渲染。
+ * 没声明的包一个都不显示 —— 宁可少显示，也不要让人以为选错了模块。
+ */
+export type PackFeature = 'onlineTuning' | 'waveform'
+
 export interface PackManifest {
   id: string
   name: string
@@ -112,6 +124,9 @@ export interface PackManifest {
   requires: PackRequires
   patches: PackPatchSpec[]
   manualSteps: string[]
+
+  /** 这个包提供哪些可选能力；不写等于都没有 */
+  features?: PackFeature[]
 
   // ---- 移植包专属（可选）----
   /** 业务文件的字段替换 */

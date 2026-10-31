@@ -12,7 +12,16 @@
  */
 
 import React from 'react'
-import { Button, Card, Field, PageBody, PageHeader, Spinner } from '../components/ui'
+import {
+  Button,
+  Card,
+  Field,
+  PageBody,
+  PageHeader,
+  Select,
+  Spinner,
+  TextInput
+} from '../components/ui'
 import { Icons } from '../components/icons'
 import { useStudio } from '../state/store'
 import type {
@@ -22,6 +31,7 @@ import type {
   PackPortResult,
   PackPortStep
 } from '@shared/packTypes'
+import type { PackPreset } from '@shared/templateFormat'
 
 interface Props {
   pack: PackManifest
@@ -50,6 +60,75 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
   const [skipCubeMx, setSkipCubeMx] = React.useState(false)
   /** 跑的过程中实时追加的步骤 */
   const [liveSteps, setLiveSteps] = React.useState<PackPortStep[]>([])
+
+  /*
+   * 模块包模板。
+   *
+   * 移植流程当前只有一个「演示模式」开关，看着简单，但模板这层先搭好：
+   * 有模板就能一键切回上次那套参数，也方便把配置分享给队友。
+   */
+  const [presets, setPresets] = React.useState<PackPreset[]>([])
+  const [activePresetId, setActivePresetId] = React.useState('')
+  const [presetName, setPresetName] = React.useState('')
+
+  /** 当前这套参数（将来加参数就往这里加） */
+  const currentParams = React.useMemo(
+    () => ({ skipCubeMx }) as Record<string, string | number | boolean>,
+    [skipCubeMx]
+  )
+
+  const refreshPresets = React.useCallback(async (): Promise<void> => {
+    try {
+      setPresets(await window.api.listPackPresets(pack.id))
+    } catch {
+      /* 读失败就当没有模板 */
+    }
+  }, [pack.id])
+
+  React.useEffect(() => {
+    void refreshPresets()
+  }, [refreshPresets])
+
+  /** 套用一个模板：把里面的参数写回界面状态 */
+  const applyPreset = (id: string): void => {
+    setActivePresetId(id)
+    if (!id) return
+    const p = presets.find((x) => x.id === id)
+    if (!p) return
+    setSkipCubeMx(Boolean(p.params['skipCubeMx']))
+  }
+
+  /** 把当前参数存成模板 */
+  const savePreset = async (): Promise<void> => {
+    const name = presetName.trim() || `${pack.name} 配置`
+    try {
+      const list = await window.api.savePackPreset({
+        id: '',
+        packId: pack.id,
+        name,
+        note: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        params: currentParams
+      })
+      setPresets(list.filter((p) => p.packId === pack.id))
+      setPresetName('')
+      notify('ok', `已存为模板「${name}」`)
+    } catch (err) {
+      notify('err', `存模板失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  const deletePreset = async (id: string): Promise<void> => {
+    try {
+      const list = await window.api.deletePackPreset(id)
+      setPresets(list.filter((p) => p.packId === pack.id))
+      if (activePresetId === id) setActivePresetId('')
+      notify('ok', '已删除模板')
+    } catch (err) {
+      notify('err', `删除失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
 
   /** 进页面先做一次预检（只读） */
   const doPreflight = React.useCallback(async (): Promise<void> => {
@@ -160,6 +239,53 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
 
         {/* ---- ② 选项 ---- */}
         <Card title="② 执行选项" hint="一般不用改">
+          {/* ---- 模板 ---- */}
+          <div className="row" style={{ marginBottom: 12, alignItems: 'flex-end' }}>
+            <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+              <Field label="套用模板">
+                <Select
+                  value={activePresetId}
+                  disabled={running}
+                  onChange={(e) => applyPreset(e.target.value)}
+                  options={[
+                    { value: '', label: presets.length ? '（不用模板，自定义）' : '（还没有模板）' },
+                    ...presets.map((p) => ({ value: p.id, label: p.name }))
+                  ]}
+                />
+              </Field>
+            </div>
+            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+              <Field label="存为新模板">
+                <TextInput
+                  value={presetName}
+                  disabled={running}
+                  placeholder={`${pack.name} 配置`}
+                  onChange={(e) => setPresetName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void savePreset()
+                  }}
+                />
+              </Field>
+            </div>
+            <Button size="sm" disabled={running} onClick={() => void savePreset()}>
+              存下来
+            </Button>
+            {activePresetId && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={running}
+                onClick={() => void deletePreset(activePresetId)}
+              >
+                删除
+              </Button>
+            )}
+          </div>
+          <div className="small faint" style={{ marginBottom: 12 }}>
+            模板只影响下面的开关，不记录工程本身的路径。想分享给队友就「存下来」，
+            再到「配置 → 模板 → 模块包模板」里导出。
+          </div>
+
           <Field label="演示模式（跳过 CubeMX）">
             <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
               <input
