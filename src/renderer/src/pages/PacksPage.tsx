@@ -54,11 +54,17 @@ const RC_CHANNELS: Array<{ name: string; field: string }> = [
   { name: 'rc_s1', field: 'rc.s[1]' }
 ]
 
+/**
+ * 检查项的显示样式。
+ *
+ * `cls` 要和 CSS 里的 `.badge--<cls>` 对上 —— 早先 info 写的是 `faint`
+ * （那是文字颜色类），换成圆底徽标后就对不上了。
+ */
 const LEVEL_STYLE: Record<string, { mark: string; cls: string }> = {
   ok: { mark: '✓', cls: 'ok' },
   warn: { mark: '!', cls: 'warn' },
   err: { mark: '✗', cls: 'err' },
-  info: { mark: 'i', cls: 'faint' }
+  info: { mark: 'i', cls: 'info' }
 }
 
 export function PacksPage(): React.JSX.Element {
@@ -308,42 +314,22 @@ export function PacksPage(): React.JSX.Element {
               ) : null
             }
           >
-            <div className="list">
+            <div className="checklist">
               {inspect.report.checks.map((c, i) => {
                 const s = LEVEL_STYLE[c.level] ?? LEVEL_STYLE.info
                 /*
-                 * 紧凑布局：图标 + 标题 + 详情**挤在一行**。
-                 *
-                 * 原来图标单独占一行、标题一行、详情一行 —— 十几项检查就要滚两屏，
-                 * 而且「符号占一行」看着像断行。现在一行一条，扫一眼就能看完。
-                 * 详情的对齐靠右，不抢标题的注意力。
+                 * 一行一条，但**给足呼吸感**：
+                 *   · 符号用圆底徽标（绿勾 / 黄叹号 / 红叉），不再是裸字符
+                 *   · 每条之间 padding 6px，鼠标划过有底色
+                 *   · 左侧固定宽度放徽标，中间标题，右边路径/说明
                  */
                 return (
-                  <div
-                    key={i}
-                    className="list__row"
-                    style={{ alignItems: 'baseline', gap: 8, paddingTop: 3, paddingBottom: 3 }}
-                  >
+                  <div key={i} className="checklist__row">
+                    <span className={`badge badge--${s.cls}`}>{s.mark}</span>
+                    <span className="checklist__label">{c.label}</span>
                     <span
-                      className={`mono ${s.cls}`}
-                      style={{ width: 14, textAlign: 'center', flex: '0 0 auto' }}
-                    >
-                      {s.mark}
-                    </span>
-                    <span className="small" style={{ flex: '0 0 auto' }}>
-                      {c.label}
-                    </span>
-                    <span
-                      className="faint small"
-                      style={{
-                        flex: 1,
-                        minWidth: 0,
-                        textAlign: 'right',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                      }}
-                      title={c.detail}
+                      className="checklist__detail checklist__detail--wrap"
+                      title={c.adapted ? `工具适配：${c.adapted}` : c.detail}
                     >
                       {c.adapted ? `工具适配：${c.adapted}` : c.detail}
                     </span>

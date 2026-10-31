@@ -39,15 +39,18 @@ interface Props {
   onBack: () => void
 }
 
-const STEP_STYLE: Record<
-  PackPortStep['status'],
-  { mark: string; color: string }
-> = {
-  running: { mark: '…', color: 'var(--fg-faint)' },
-  ok: { mark: '✓', color: 'var(--ok)' },
-  warn: { mark: '!', color: 'var(--warn)' },
-  err: { mark: '✗', color: 'var(--err)' },
-  skip: { mark: '–', color: 'var(--fg-faint)' }
+/**
+ * 步骤状态的显示样式。
+ *
+ * `cls` 对应 CSS 的 `.badge--<cls>`（圆底徽标）—— 早先这里是裸符号 + 文字颜色，
+ * 一列堆下来像乱码。
+ */
+const STEP_STYLE: Record<PackPortStep['status'], { mark: string; cls: string }> = {
+  running: { mark: '…', cls: 'info' },
+  ok: { mark: '✓', cls: 'ok' },
+  warn: { mark: '!', cls: 'warn' },
+  err: { mark: '✗', cls: 'err' },
+  skip: { mark: '–', cls: 'info' }
 }
 
 export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.Element {
@@ -210,26 +213,21 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
           {!preflight ? (
             <div className="small faint">{checking ? '正在检查…' : '（没有结果）'}</div>
           ) : (
-            <div className="list">
+            <div className="checklist">
               {preflight.items.map((it, i) => {
                 const s =
                   it.level === 'err'
-                    ? { mark: '✗', color: 'var(--err)' }
+                    ? { mark: '✗', cls: 'err' }
                     : it.level === 'warn'
-                      ? { mark: '!', color: 'var(--warn)' }
-                      : { mark: '✓', color: 'var(--ok)' }
+                      ? { mark: '!', cls: 'warn' }
+                      : { mark: '✓', cls: 'ok' }
                 return (
-                  <div key={i} className="list__row" style={{ alignItems: 'flex-start' }}>
-                    <span
-                      className="mono"
-                      style={{ width: 16, textAlign: 'center', flex: '0 0 auto', color: s.color }}
-                    >
-                      {s.mark}
+                  <div key={i} className="checklist__row">
+                    <span className={`badge badge--${s.cls}`}>{s.mark}</span>
+                    <span className="checklist__label">{it.label}</span>
+                    <span className="checklist__detail checklist__detail--wrap" title={it.detail}>
+                      {it.detail}
                     </span>
-                    <div className="grow">
-                      <div className="small">{it.label}</div>
-                      <div className="faint small">{it.detail}</div>
-                    </div>
                   </div>
                 )
               })}
@@ -315,21 +313,21 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
             title="③ 执行过程"
             hint={running ? '正在跑，CubeMX 那一步约 40 秒' : '已完成'}
           >
-            <div className="list">
+            <div className="checklist">
               {steps.map((s, i) => {
                 const st = STEP_STYLE[s.status]
                 return (
-                  <div key={`${s.id}-${i}`} className="list__row" style={{ alignItems: 'flex-start' }}>
+                  <div key={`${s.id}-${i}`} className="checklist__row" style={{ alignItems: 'flex-start' }}>
                     <span
-                      className="mono"
-                      style={{ width: 16, textAlign: 'center', flex: '0 0 auto', color: st.color }}
+                      className={`badge badge--${st.cls}`}
+                      style={{ marginTop: 1 }}
                     >
                       {st.mark}
                     </span>
-                    <div className="grow">
+                    <div className="grow" style={{ minWidth: 0 }}>
                       <div className="small">{s.label}</div>
                       {s.detail && (
-                        <div className="faint small" style={{ whiteSpace: 'pre-wrap' }}>
+                        <div className="faint small" style={{ whiteSpace: 'pre-wrap', marginTop: 2 }}>
                           {s.detail}
                         </div>
                       )}
@@ -338,8 +336,8 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
                 )
               })}
               {running && (
-                <div className="list__row">
-                  <span className="mono" style={{ width: 16, textAlign: 'center' }}>
+                <div className="checklist__row">
+                  <span className="badge badge--info">
                     <Spinner />
                   </span>
                   <div className="grow small faint">执行中…</div>
@@ -355,24 +353,14 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
             title="④ 验收"
             hint={`${result.acceptance.filter((a) => a.ok).length}/${result.acceptance.length} 项通过`}
           >
-            <div className="list">
+            <div className="checklist">
               {result.acceptance.map((a: PackPortAcceptanceItem) => (
-                <div key={a.id} className="list__row" style={{ alignItems: 'flex-start' }}>
-                  <span
-                    className="mono"
-                    style={{
-                      width: 16,
-                      textAlign: 'center',
-                      flex: '0 0 auto',
-                      color: a.ok ? 'var(--ok)' : 'var(--err)'
-                    }}
-                  >
-                    {a.ok ? '✓' : '✗'}
+                <div key={a.id} className="checklist__row">
+                  <span className={`badge badge--${a.ok ? 'ok' : 'err'}`}>{a.ok ? '✓' : '✗'}</span>
+                  <span className="checklist__label">{a.label}</span>
+                  <span className="checklist__detail" title={a.detail}>
+                    {a.detail}
                   </span>
-                  <div className="grow">
-                    <div className="small">{a.label}</div>
-                    <div className="faint small">{a.detail}</div>
-                  </div>
                 </div>
               ))}
             </div>

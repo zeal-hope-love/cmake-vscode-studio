@@ -1608,3 +1608,88 @@ html[data-theme='light'] .log {
   min-width: 16px;
   text-align: center;
 }
+
+/* ---------------------------------------------------------------------------
+   状态徽标：圆底 + 符号
+   
+   原来是一串裸符号挤在文字左边，行与行之间也没有间隔，看着像一段乱码。
+   改成圆形底 + 对比色符号，一眼能扫出哪几条是警告。
+   --------------------------------------------------------------------------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.badge--ok {
+  background: color-mix(in oklab, var(--ok) 16%, transparent);
+  color: var(--ok);
+}
+
+.badge--warn {
+  background: color-mix(in oklab, var(--warn) 18%, transparent);
+  color: var(--warn);
+}
+
+.badge--err {
+  background: color-mix(in oklab, var(--err) 16%, transparent);
+  color: var(--err);
+}
+
+.badge--info {
+  background: var(--bg-sunken);
+  color: var(--fg-faint);
+}
+
+/* 检查列表：每条之间留出呼吸感 */
+.checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.checklist__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  border-radius: 6px;
+  transition: background var(--dur) var(--ease-out);
+}
+
+.checklist__row:hover {
+  background: var(--bg-sunken);
+}
+
+.checklist__label {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.checklist__detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  font-size: 12px;
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 详情太长（比如头文件路径）时允许换行显示完整 */
+.checklist__detail--wrap {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: left;
+  word-break: break-all;
+}
