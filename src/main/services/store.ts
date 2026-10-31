@@ -86,15 +86,21 @@ export function readStoreFile<T>(filePath: string, fallback: T): T {
 /**
  * 写 JSON 到数据目录。
  *
- * 为什么要重试：`settings.json` 这类文件可能被**另一个实例**短暂占用 ——
- * 最常见的是 dev 模式和打包版同时在跑（两个进程共用同一个 userData 目录），
- * 或者杀毒软件正在扫描刚写完的文件。此时 Windows 会抛 EPERM/EBUSY，
- * 而实际上过几十毫秒就能写了。
+ * ## 为什么这里不用「临时文件 + 原子改名」
  *
- * 早先这里是「一次写失败就往渲染进程抛」，用户会看到
+ * 看起来那是标准做法，但**在 Windows 上会失败**：目标文件只要被任何句柄打开着
+ * （哪怕只是只读），`renameSync` 覆盖它就抛 `EPERM`。实测过，见下。
+ *
+ * 而 `writeFileSync` 直接覆盖反而更容易成功 —— 因为读锁并不阻止写。
+ * 所以这里走「直接覆盖 + 退避重试」。
+ *
+ * ## 谁在占这个文件
+ *
+ * dev 模式下主进程、渲染进程、以及 Electron 自己的 GPU/utility 子进程会并发
+ * 碰 `settings.json`。撞上时原来是一次就抛，用户看到
  *   Error invoking remote method 'window:setTheme': EPERM: operation not permitted
- * 这种看了完全不知道该怎么办的报错。现在改成退避重试，
- * 真的写不进去才抛，并把路径带进错误信息。
+ * 完全不知道该干什么。现在退避重试 5 次（20→40→80→160ms，约 0.3s），
+ * 绝大多数瞬时冲突都能过去；真过不去才抛，并把路径和原因写进错误信息。
  */
 export function writeStoreFile(filePath: string, value: unknown): void {
   mkdirSync(dirname(filePath), { recursive: true })
@@ -122,6 +128,7 @@ export function writeStoreFile(filePath: string, value: unknown): void {
   const msg = lastErr instanceof Error ? lastErr.message : String(lastErr)
   throw new Error(
     `写不进去：${filePath}\n${msg}\n` +
-      `如果同时开着两个窗口（比如 dev 模式和安装版），先关掉一个再试。`
+      `常见原因：同时开着两个窗口（dev 模式 + 安装版），或杀毒软件正在扫描这个文件。` +
+      `先关掉多余的窗口再试。`
   )
 }

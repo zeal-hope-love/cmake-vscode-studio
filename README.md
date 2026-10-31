@@ -1,10 +1,10 @@
 <img src="resources/icon.png" width="76" alt="图标">
 
-# CMake / VSCode 工程配置器
+# CV Studio
 
 **自动读懂一个 CMake 工程，然后把它在 VSCode 里跑起来所需要的 `.vscode` 配置全部生成好。**
 
-面向嵌入式开发（STM32 / Cortex-M），但**不限于 STM32** —— 通用 CMake 工程同样能用。
+> 面向嵌入式开发（STM32 / Cortex-M），但**不限于 STM32** —— 通用 CMake 工程同样能用。
 
 ![工程总览](docs/screenshots/01-overview.png)
 
@@ -37,21 +37,46 @@
 
 - **工程检测** —— 自动找工程根（支持 VSCode 当前打开的 / 最近打开的 / 手输路径），读 CMake、CubeMX、现有 `.vscode` 配置
 - **四类配置文件的可视化编辑** —— `launch.json` / `tasks.json` / `settings.json` / `c_cpp_properties.json`，改完即时生效，不用点保存
-- **构建目标与源文件** —— 图形化改 `CMakeLists.txt`：把漏掉的源文件勾进构建，不用手改 CMake。自带差异预览与一键还原
-- **调试模块（模块包）** —— 往工程里装调试代码。目前是 **VOFA+ 在线调参**：扫出工程里的 PID 结构体，勾一勾就注册好波形通道和在线可调参数
+- **源文件管理** —— 图形化改 `CMakeLists.txt`：把漏掉的源文件勾进构建，不用手改 CMake。自带差异预览与一键还原
+- **模块包（扩展）** —— 往工程里装调试代码。目前是 **VOFA+ 在线调参**：扫出工程里的 PID 结构体，勾一勾就注册好波形通道和在线可调参数
 - **写入前差异预览** —— 逐文件 diff，确认后才落盘；可选自动备份
-- **模板系统** —— 把一套配置存成模板，跨工程复用；内置占位符（`${elfName}`、`${device}`…）
+- **模板系统** —— 把一套配置存成模板，跨工程复用；内置占位符（`${elfName}`、`${device}`…）。**支持导出 / 导入 `.cvtpl.json`**，能备份、能发给别人
 - **多工程批量套用** —— 一次把模板套到多个工程
 - **工具与探针探测** —— 自动找 CMake / Ninja / Arm GNU 工具链 / OpenOCD / CubeCLT，环境变量优先
 - **Live Watch** —— 不停机看全局变量（cortex-debug 实验性功能，类似 Keil 的 Live Watch），**默认开启**，可设采样率与刷新率
 - **一键构建 / 烧录 + 实时日志**
-- **历史记录** —— 每次检测、写入、还原都留痕，可一键重做
+- **历史与恢复** —— 每次检测、写入、还原都留痕，可一键重做
 - **快照与真还原** —— 每次写入前自动快照，可还原到写入前的样子（连"当时不存在的文件"也一并删掉）
 - **深浅色主题**，默认跟随系统
 
 ---
 
-## 快速开始
+## 界面结构
+
+左侧导航按**「你在处理什么对象」**分四组：
+
+```
+工程    对这一个工程本身：看 → 查 → 改 → 跑
+  ├ 工程总览          检测结果、芯片/探针状态、写入配置入口
+  ├ 检查与清理         体检 + 一键修复（工程改名、陈旧产物…）
+  ├ 源文件管理         图形化改 CMakeLists.txt：把漏掉的源文件勾进构建
+  └ 构建与烧录         编译、烧录、实时日志
+
+配置    它的配置文件
+  ├ VSCode 配置        四个 JSON 文件（可折叠：launch / tasks / settings / c_cpp_properties）
+  ├ 探针与芯片         决定生成的配置内容：探针、device、适配器速度、SVD、Live Watch
+  └ 模板              存/套用/导出/导入整套配置
+
+扩展    装能力 —— 每个模块包占一行，由 packs/ 目录自动生成
+  └ 模块包            VOFA+ 在线调参（将来会有更多）
+
+系统    应用与机器
+  ├ 工具链与路径       工具探测与手动指定（只管"工具装在哪"）
+  └ 历史与恢复         操作留痕 + 快照还原
+```
+
+> 为什么 4 个 JSON 折叠、4 个工程项平铺：前者是**同一类东西的 4 个实例**，
+> 后者是**四件不同的事**（看/查/改/跑），套三层反而要多点一次。
 
 ### 方式一：直接下载 exe（推荐）
 
@@ -59,8 +84,8 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `CMake-VSCode-Configurator-1.3.0-x64.exe` | **安装版**，有开始菜单项，可覆盖升级 |
-| `CMake-VSCode-Configurator-1.3.0-portable.exe` | **免安装版**，单文件，双击就跑 |
+| `CmakeVscodeStudio-2.0.0-x64.exe` | **安装版**，有开始菜单项，可覆盖升级 |
+| `CmakeVscodeStudio-2.0.0-portable.exe` | **免安装版**，单文件，双击就跑 |
 
 两个都是**自包含**的，不需要另装 Node 或 Electron。
 
@@ -169,7 +194,7 @@ Ninja 在源码没改动时什么都不做 —— 但编译失败时 VSCode 会�
 
 
 按分组列出全部键值，可以增删改。写入的键包括 cortex-debug 的 OpenOCD 路径、CMake Tools 的
-generator / 构建目录等。工具路径可以从「工具与路径」页一键填入。
+generator / 构建目录等。工具路径可以从「工具链与路径」页一键填入。
 
 ### 工程 · IntelliSense
 
@@ -184,7 +209,7 @@ generator / 构建目录等。工具路径可以从「工具与路径」页一�
 点按钮跑任务，输出实时打在下方的日志里。这一步和 VSCode 里按 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>
 等价，只是在工具里也能跑（方便配置过程中验证）。
 
-### 源码 · 构建目标与源文件
+### 工程 · 源文件管理
 
 
 图形化改 `CMakeLists.txt`，解决两个最常见的烦事：**文件漏加了忘了加**、和**别人写的 CMake 看不懂该改哪**。
@@ -223,7 +248,7 @@ CMake 的标准做法是**每个目录一个 `CMakeLists.txt`**，由根文件�
 
 刻意**只引用、不下结论** —— 工具不会说"判定你故意排除了它"，判断权留给你。
 
-### 源码 · 调试模块
+### 扩展 · 模块包
 
 
 **模块包**：把一段调试代码装进工程，并把该改的地方一次改对。目前提供两个包。
@@ -260,7 +285,7 @@ CMake 的标准做法是**每个目录一个 `CMakeLists.txt`**，由根文件�
 
 如果工程里已经配好了 RX DMA / 串口中断，兼容性检查会自动识别并切换到对应模式。
 
-### 模板 · 模板与配置
+### 配置 · 模板
 
 
 模板 = 一套可复用的配置。可以新建、从当前工程存一份、编辑、复制、看 JSON、删除，也可以批量套用到多个工程。
@@ -295,7 +320,7 @@ ${probeLabel}  ${projectRoot}
 
 内置模板带 `builtin:` 前缀，不能改也不能删（复制一份就可以改了）。
 
-### 环境 · 工具与路径
+### 系统 · 工具链与路径
 
 
 自动探测 CMake、Ninja、Arm GNU 工具链、OpenOCD、STM32CubeCLT / CubeMX。**这个页面不需要先载入工程**
@@ -354,7 +379,7 @@ ${probeLabel}  ${projectRoot}
 下面还有**备份与还原**：每次写入前自动存快照（每工程最多 20 份），可以还原到写入前。
 还原是**真还原** —— 写入时新建的文件会被删掉，而不是留着。
 
-### 记录 · 历史记录
+### 系统 · 历史与恢复
 
 
 每次检测工程、写入配置、还原、套模板、跑任务都记一条，带时间和工程。可以直接从记录里
@@ -384,9 +409,9 @@ ${probeLabel}  ${projectRoot}
 | `c_cpp_properties.json` | IntelliSense 配置 |
 | `openocd-<target>-<probe>.cfg` | 探针接线配置（`source [find interface/...]` + `target/...`） |
 
-**「构建目标与源文件」** 只改工程根的 `CMakeLists.txt`（往里插源文件名）。
+**「源文件管理」** 只改工程根的 `CMakeLists.txt`（往里插源文件名）。
 
-**「调试模块」** 会额外动这些：
+**「模块包」** 会额外动这些：
 
 | 文件 | 改动 |
 | --- | --- |
@@ -401,7 +426,7 @@ ${probeLabel}  ${projectRoot}
 
 - 写入前逐文件差异预览，确认后才写；
 - 每次写入自动存快照，可一键还原到写入前（新建的文件会一并删掉）；
-- 「调试模块」如果存快照失败会**直接中止** —— 说好可还原就必须真的可还原。
+- 「模块包」如果存快照失败会**直接中止** —— 说好可还原就必须真的可还原。
 
 工程根之外一律拒绝写入（`../` 越界会被拦下）。
 
@@ -429,18 +454,36 @@ ${probeLabel}  ${projectRoot}
 
 ## 更新与覆盖安装
 
-**可以直接覆盖升级，用户数据不会丢。**
+### ⚠️ 2.0.0 是改名版本，从 1.x 升级请先读这段
 
+这个版本把应用从 **CMake / VSCode 工程配置器** 改名为 **CV Studio**，
+`productName` 跟着变了 —— 而 `productName` 决定安装目录和用户数据目录。
+
+| 项 | 1.x | 2.0.0 |
+| --- | --- | --- |
+| 应用名（窗口/快捷方式/应用和功能） | CMake / VSCode 工程配置器 | **CV Studio** |
+| 安装包文件名 | `CMake-VSCode-Configurator-*.exe` | **`CmakeVscodeStudio-*.exe`** |
+| 安装目录 | `%LOCALAPPDATA%\Programs\CMake-VSCode-Configurator` | **`%LOCALAPPDATA%\Programs\CV Studio`** |
+| 数据目录 | `%APPDATA%\CMake-VSCode-Configurator` | **`%APPDATA%\CV Studio`** |
+
+**设置、模板、快照、历史会自动迁移** —— 首次启动时如果发现旧目录里有数据，
+会整体搬到新目录（`src/main/services/store.ts` 的 `LEGACY_DIR_NAMES`）。
+**但旧版不会自动卸载**：两个版本能共存，「应用和功能」里会出现两条，
+装完 CV Studio 后请手动把旧的「CMake / VSCode 工程配置器」卸掉。
+
+### 之后的版本
+
+**可以直接覆盖升级，用户数据不会丢。**
 
 | 方式 | 怎么升级 |
 | --- | --- |
 | 安装版（`-x64.exe`） | 直接下载新版本运行，选**同一个安装目录**即可覆盖。`appId` 不变，卸载信息会更新 |
 | 免安装版（`-portable.exe`） | 直接用新文件覆盖旧文件 |
 
-安装时会创建桌面和开始菜单快捷方式（名字是 **CMake VSCode 工程配置器**），
+安装时会创建桌面和开始菜单快捷方式（名字是 **CV Studio**），
 「应用和功能」里显示的名字也是它。
 
-**数据目录**：`%APPDATA%\CMake-VSCode-Configurator\`
+**数据目录**：`%APPDATA%\CV Studio\`
 
 ```
 settings.json     应用设置（主题、工具路径、最近工程）
@@ -455,7 +498,7 @@ history.json      历史记录
 > 目前**没有做应用内自动更新**（未集成 `electron-updater`），升级需要手动下载新版本。
 > 后续加自动更新时，用的是同一套 NSIS 差分包机制，可以直接覆盖。
 
-**升级到 1.3.0 不需要做任何迁移**：设置、模板、快照、历史记录的格式都没变。
+**升级到 2.0.0 不需要做任何迁移**：设置、模板、快照、历史记录的格式都没变。
 `packs/`（模块包）是新增的，放在**安装目录**里，不在数据目录，所以也不影响你已有的数据。
 
 ---
@@ -520,7 +563,7 @@ cmake-vscode-studio/
    │     ├─ runner.ts        构建/烧录进程管理
    │     ├─ cmakeModel.ts    带位置信息的 CMake 解析（能回写，不只是读）
    │     ├─ cmakeEdit.ts     在 CMakeLists 里增删源文件（生成最小 diff）
-   │     ├─ sourceScanner.ts 「构建目标与源文件」的数据来源
+   │     ├─ sourceScanner.ts 「源文件管理」的数据来源
    │     ├─ packStore.ts     模块包装载、工程探测、兼容性检查、PID 扫描
    │     ├─ packInstaller.ts 模块包渲染与安装（含补丁计划）
    │     └─ snapshotStore.ts 写入快照与还原
@@ -632,7 +675,7 @@ node node_modules/electron/install.js
 按顺序检查：
 1. 扩展装了吗？嵌入式需要 `cortex-debug`，通用 C/C++ 需要 `CMake Tools`；
 2. `build/Debug/<固件名>.elf` 存在吗？不存在先用「构建与烧录」页构建一次；
-3. OpenOCD 路径对不对？看「工具与路径」页的探测结果，或在 `settings.json` 页一键填入；
+3. OpenOCD 路径对不对？看「工具链与路径」页的探测结果，或在 `settings.json` 页一键填入；
 4. 探针选对了吗？DAP-Link 选 CMSIS-DAP，ST-Link 选 ST-Link。
 
 **Q：能用于非 STM32 的工程吗？**
@@ -645,7 +688,7 @@ node node_modules/electron/install.js
 `.vscode/.backup/`。
 
 **Q：升级会丢我的模板和快照吗？**
-不会。它们存在 `%APPDATA%\CMake-VSCode-Configurator\`，安装/覆盖升级不碰这个目录。
+不会。它们存在 `%APPDATA%\CV Studio\`，安装/覆盖升级不碰这个目录。
 
 ---
 

@@ -283,7 +283,13 @@ export const useStudio = create<StudioState>()((set, get) => ({
       const [settings, appInfo] = await Promise.all([window.api.getSettings(), window.api.getAppInfo()])
       set({ settings, appInfo, ready: true })
       applyThemeToDom(settings.theme)
-      await window.api.setWindowTheme(settings.theme)
+      // 只影响标题栏配色，写盘失败也不该阻断启动 —— 吞掉错误，
+      // 真正需要用户知道的是「设置没保存成功」，那是 setTheme 那边的事。
+      try {
+        await window.api.setWindowTheme(settings.theme)
+      } catch {
+        /* 忽略：主题没写进去不影响使用 */
+      }
 
       // 选「跟随系统」时，系统在深浅色之间切换要立刻反映到界面上
       const media = window.matchMedia('(prefers-color-scheme: dark)')
@@ -313,11 +319,17 @@ export const useStudio = create<StudioState>()((set, get) => ({
   setPage: (page) => set({ activePage: page }),
 
   setTheme: async (theme) => {
+    // 先把界面换掉 —— 这一步不依赖磁盘，永远会成功。
+    // 万一后面写盘失败，用户至少看到主题已经变了，而不是「点了没反应还报错」。
     applyThemeToDom(theme)
-    const settings = await window.api.saveSettings({ theme })
-    set({ settings })
-    // 主进程负责标题栏覆盖层与窗口背景色（「跟随系统」由它去问操作系统）
-    await window.api.setWindowTheme(theme)
+    try {
+      const settings = await window.api.saveSettings({ theme })
+      set({ settings })
+      // 主进程负责标题栏覆盖层与窗口背景色（「跟随系统」由它去问操作系统）
+      await window.api.setWindowTheme(theme)
+    } catch (err) {
+      get().notify('err', `主题已切换，但没能保存到设置文件：${err instanceof Error ? err.message : String(err)}`)
+    }
   },
 
   notify: (kind, text, ms = 3200) => {
