@@ -72,6 +72,75 @@ export function captureSnapshot(projectRoot: string, entries: SnapshotEntry[]): 
 export function captureSnapshotDetailed(
   projectRoot: string,
   entries: SnapshotEntry[]
+): { id: string | null; error?: string; usedFallback?: boolean } {
+  if (!entries.length) return { id: null, error: '没有需要快照的文件' }
+
+  let primary: string | null = null
+  try {
+    primary = projectDir(projectRoot)
+  } catch {
+    // rootDir 没配置（自检脚本里就是这样），直接走降级路径
+  }
+
+  const id = `${Date.now()}-${randomUUID().slice(0, 8)}`
+  const snapshot: SnapshotFile = {
+    id,
+    projectRoot,
+    createdAt: Date.now(),
+    fileCount: entries.length,
+    newFileCount: entries.filter((e) => e.previous === null).length,
+    files: entries
+  }
+  const json = JSON.stringify(snapshot)
+
+  /*
+   * 依次尝试几个位置。
+   *
+   * 为什么不是只写一处：实测在某些环境下 Electron 进程**写不进 userData
+   * 目录**（EPERM，但同路径 PowerShell / Node 都能写，ACL 也正常）。
+   * 重试 8 次（约 1 秒）仍然失败，说明是被持续阻止而不是瞬时冲突。
+   *
+   * 这时候最合理的做法是**换一个能写的地方**，而不是让整个移植流程卡死 ——
+   * 快照的意义是「改坏了能回去」，换个位置存照样能回去。
+   *
+   * 优先 userData（不污染用户工程）；实在不行退到工程目录下的隐藏文件夹。
+   */
+  const candidates: Array<{ dir: string; label: string; fallback: boolean }> = []
+  if (primary) candidates.push({ dir: primary, label: '应用数据目录', fallback: false })
+  candidates.push({
+    dir: join(projectRoot, '.cvstudio-snapshots', projectKey(projectRoot)),
+    label: '工程目录',
+    fallback: true
+  })
+
+  const failures: string[] = []
+  for (const c of candidates) {
+    try {
+      mkdirSync(c.dir, { recursive: true })
+      const w = writeFileWithRetry(join(c.dir, `${id}.json`), json, '快照')
+      if (!w.ok) {
+        failures.push(`${c.label}：${w.error}`)
+        continue
+      }
+      pruneOldSnapshots(c.dir)
+      if (c.fallback) {
+        console.warn('[snapshot] 应用数据目录写不进去，已改存到工程目录：', c.dir)
+      }
+      return { id, usedFallback: c.fallback }
+    } catch (err) {
+      failures.push(`${c.label}：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  const msg = failures.join('\n')
+  console.error('[snapshot] 所有位置都存不下：', msg)
+  return { id: null, error: msg }
+}
+
+/** @deprecated 旧实现保留作参考 */
+function _legacyCaptureSnapshotDetailed(
+  projectRoot: string,
+  entries: SnapshotEntry[]
 ): { id: string | null; error?: string } {
   if (!entries.length) return { id: null, error: '没有需要快照的文件' }
 
@@ -98,12 +167,6 @@ export function captureSnapshotDetailed(
       files: entries
     }
 
-    /*
-     * 用带重试的写入 —— 实测 Electron 进程写文件会偶发 EPERM
-     * （同一路径用 Node 进程写就正常），尤其快照这种「一次写几百 KB、
-     * 几十个文件内容」的场景。不重试的话移植流程第一步就卡死。
-     * 详见 fileWrite.ts 的文件说明。
-     */
     const w = writeFileWithRetry(join(dir, `${id}.json`), JSON.stringify(snapshot), '快照')
     if (!w.ok) {
       return { id: null, error: w.error }
@@ -174,30 +237,51 @@ function pruneOldSnapshots(dir: string): void {
   }
 }
 
-export function listSnapshots(projectRoot: string): SnapshotMeta[] {
-  const dir = projectDir(projectRoot)
-  if (!existsSync(dir)) return []
-
-  const metas: SnapshotMeta[] = []
+/**
+ * 一个工程的所有可能快照目录。
+ *
+ * 正常情况下只用第一个（userData）。第二个是**降级位置** ——
+ * 写不进 userData 时会退到工程目录下，读取和还原也必须能找到那儿，
+ * 否则会出现「明明存了快照，列表里却是空的」。
+ */
+function allDirs(projectRoot: string): string[] {
+  const out: string[] = []
   try {
-    for (const file of readdirSync(dir)) {
-      if (!file.endsWith('.json')) continue
-      try {
-        const parsed = JSON.parse(readFileSync(join(dir, file), 'utf8')) as SnapshotFile
-        if (!parsed?.id) continue
-        metas.push({
-          id: parsed.id,
-          projectRoot: parsed.projectRoot,
-          createdAt: parsed.createdAt,
-          fileCount: parsed.fileCount,
-          newFileCount: parsed.newFileCount
-        })
-      } catch {
-        /* 坏掉的快照跳过 */
-      }
-    }
+    out.push(projectDir(projectRoot))
   } catch {
-    return []
+    /* rootDir 没配置 */
+  }
+  out.push(join(projectRoot, '.cvstudio-snapshots', projectKey(projectRoot)))
+  return out
+}
+
+export function listSnapshots(projectRoot: string): SnapshotMeta[] {
+  const metas: SnapshotMeta[] = []
+  const seen = new Set<string>()
+
+  for (const dir of allDirs(projectRoot)) {
+    if (!existsSync(dir)) continue
+    try {
+      for (const file of readdirSync(dir)) {
+        if (!file.endsWith('.json')) continue
+        try {
+          const parsed = JSON.parse(readFileSync(join(dir, file), 'utf8')) as SnapshotFile
+          if (!parsed?.id || seen.has(parsed.id)) continue
+          seen.add(parsed.id)
+          metas.push({
+            id: parsed.id,
+            projectRoot: parsed.projectRoot,
+            createdAt: parsed.createdAt,
+            fileCount: parsed.fileCount,
+            newFileCount: parsed.newFileCount
+          })
+        } catch {
+          /* 坏掉的快照跳过 */
+        }
+      }
+    } catch {
+      /* 这个目录读不了就看下一个 */
+    }
   }
 
   return metas.sort((a, b) => b.createdAt - a.createdAt)
@@ -207,8 +291,16 @@ export function listSnapshots(projectRoot: string): SnapshotMeta[] {
 export function restoreSnapshot(projectRoot: string, snapshotId: string): RestoreResult {
   const result: RestoreResult = { restored: [], removed: [], errors: [] }
 
-  const filePath = join(projectDir(projectRoot), `${snapshotId}.json`)
-  if (!existsSync(filePath)) {
+  // 两个位置都找一遍 —— 快照可能因为 userData 写不进降级到了工程目录
+  let filePath: string | null = null
+  for (const dir of allDirs(projectRoot)) {
+    const p = join(dir, `${snapshotId}.json`)
+    if (existsSync(p)) {
+      filePath = p
+      break
+    }
+  }
+  if (!filePath) {
     result.errors.push('找不到这条快照，可能已被自动清理')
     return result
   }

@@ -14,6 +14,12 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { buildTemplateFile, parseTemplateFile, TEMPLATE_FORMAT_DOC, isBuiltinPresetId } from '../src/shared/templateFormat'
 import { listBuiltinPackPresets } from '../src/main/services/packPresetStore'
+import {
+  captureSnapshotDetailed,
+  configureSnapshots,
+  listSnapshots,
+  restoreSnapshot
+} from '../src/main/services/snapshotStore'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -2047,6 +2053,50 @@ const samplePreset = {
     '内置模板: isBuiltinPresetId 能区分用户模板',
     !isBuiltinPresetId('a1b2c3d4-user-made')
   )
+}
+
+// ==========================================================================
+// 19. 快照降级：应用数据目录写不进时改存工程目录
+//
+// 起因：用户的机器上 userData 目录写不进（EPERM），移植流程第一步就卡死。
+// 快照的意义是「改坏了能回去」，换个地方存照样能回去 —— 不该让整条流程报废。
+// ==========================================================================
+
+{
+  section('19. 快照降级')
+
+  const fbRoot = join(tmpdir(), `cv-fallback-${Date.now()}`)
+  mkdirSync(fbRoot, { recursive: true })
+
+  // 把主位置指到一个不存在的盘符，模拟「userData 写不进去」
+  configureSnapshots('Z:\\definitely-no-such-drive\\snapshots')
+
+  const r1 = captureSnapshotDetailed(fbRoot, [{ relativePath: 'a.c', previous: 'old' }])
+  check('快照降级: 主目录写不进时仍能存下', r1.id !== null, r1.error)
+  check('快照降级: 标出了走了降级路径', r1.usedFallback === true)
+
+  const fallbackDir = join(fbRoot, '.cvstudio-snapshots')
+  check('快照降级: 存到工程下的 .cvstudio-snapshots', existsSync(fallbackDir))
+
+  const listed = listSnapshots(fbRoot)
+  check('快照降级: 列表能找到降级存的快照', listed.length === 1, `共 ${listed.length} 条`)
+
+  if (r1.id) {
+    const restored = restoreSnapshot(fbRoot, r1.id)
+    check('快照降级: 能从降级位置还原', restored.errors.length === 0, restored.errors.join('; '))
+    check('快照降级: 还原写出了文件', restored.restored.length === 1)
+    check(
+      '快照降级: 还原内容正确',
+      existsSync(join(fbRoot, 'a.c')) && readFileSync(join(fbRoot, 'a.c'), 'utf8') === 'old'
+    )
+  }
+
+  // 恢复正常配置，免得影响后面的用例
+  configureSnapshots(join(fbRoot, 'normal'))
+  const r2 = captureSnapshotDetailed(fbRoot, [{ relativePath: 'b.c', previous: 'x' }])
+  check('快照降级: 主目录可用时走主路径', r2.id !== null && r2.usedFallback === false)
+
+  rmSync(fbRoot, { recursive: true, force: true })
 }
 
 // ==========================================================================
