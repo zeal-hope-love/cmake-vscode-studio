@@ -83,7 +83,45 @@ export function readStoreFile<T>(filePath: string, fallback: T): T {
   }
 }
 
+/**
+ * 写 JSON 到数据目录。
+ *
+ * 为什么要重试：`settings.json` 这类文件可能被**另一个实例**短暂占用 ——
+ * 最常见的是 dev 模式和打包版同时在跑（两个进程共用同一个 userData 目录），
+ * 或者杀毒软件正在扫描刚写完的文件。此时 Windows 会抛 EPERM/EBUSY，
+ * 而实际上过几十毫秒就能写了。
+ *
+ * 早先这里是「一次写失败就往渲染进程抛」，用户会看到
+ *   Error invoking remote method 'window:setTheme': EPERM: operation not permitted
+ * 这种看了完全不知道该怎么办的报错。现在改成退避重试，
+ * 真的写不进去才抛，并把路径带进错误信息。
+ */
 export function writeStoreFile(filePath: string, value: unknown): void {
   mkdirSync(dirname(filePath), { recursive: true })
-  writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8')
+  const text = JSON.stringify(value, null, 2)
+
+  const attempts = 5
+  let lastErr: unknown = null
+  for (let i = 0; i < attempts; i++) {
+    try {
+      writeFileSync(filePath, text, 'utf8')
+      return
+    } catch (err) {
+      lastErr = err
+      const code = (err as NodeJS.ErrnoException).code
+      // 只有「文件被占用 / 没权限」这类才值得重试；其它错误立刻抛
+      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') throw err
+      // 退避：20ms → 40 → 80 → 160，总耗时约 0.3s，用户感知不到
+      const until = Date.now() + 20 * 2 ** i
+      while (Date.now() < until) {
+        /* 忙等：这里在主进程同步路径上，用 Atomics.wait 反而更绕 */
+      }
+    }
+  }
+
+  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr)
+  throw new Error(
+    `写不进去：${filePath}\n${msg}\n` +
+      `如果同时开着两个窗口（比如 dev 模式和安装版），先关掉一个再试。`
+  )
 }

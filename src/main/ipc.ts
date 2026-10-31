@@ -22,7 +22,7 @@ import {
   scanSources,
   signatureOf
 } from './services/sourceScanner'
-import { existsSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   IPC,
@@ -500,6 +500,91 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const list = deleteTemplate(id)
     if (target) recordTemplateDelete(target.name)
     return list
+  })
+
+  // ------------------------------------------------------------------------
+  // 模板导入 / 导出
+  // ------------------------------------------------------------------------
+
+  /**
+   * 导出一个模板到 .json 文件。
+   *
+   * 存成 `{ format, version, template }` 而不是裸的模板对象 —— 文件被别的程序
+   * 误打开、或者将来格式变了你还能看出这是什么东西。导入时认 format 字段，
+   * 不认就当作裸模板再试一次（兼容手写的文件）。
+   */
+  ipcMain.handle(IPC.templateExport, async (_e, template: ConfigTemplate): Promise<string | null> => {
+    const win = getWindow()
+    // 文件名用模板名，去掉 Windows 不允许的字符
+    const safe = (template.name || 'template').replace(/[\\/:*?"<>|]/g, '_')
+    const options = {
+      title: '导出模板',
+      defaultPath: join(app.getPath('documents'), `${safe}.cvtpl.json`),
+      filters: [{ name: '模板文件', extensions: ['json'] }]
+    }
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return null
+
+    const payload = {
+      format: 'cv-studio-template',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      template
+    }
+    writeFileSync(result.filePath, JSON.stringify(payload, null, 2), 'utf8')
+    return result.filePath
+  })
+
+  /**
+   * 从 .json 文件导入模板，可以一次选多个。
+   *
+   * 导入的模板会拿到**新 id**（`id: ''` 交给 saveTemplate 生成），避免覆盖同名的
+   * 本地模板 —— 用户从别人那儿拿一份模板回来，不该把手里那份顶掉。
+   */
+  ipcMain.handle(IPC.templateImport, async () => {
+    const win = getWindow()
+    const options = {
+      title: '导入模板',
+      properties: ['openFile' as const, 'multiSelections' as const],
+      filters: [{ name: '模板文件', extensions: ['json'] }]
+    }
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+
+    let imported = 0
+    let failed = 0
+    for (const p of result.filePaths) {
+      try {
+        const raw = readFileSync(p, 'utf8')
+        const parsed = JSON.parse(raw) as Record<string, unknown>
+        // 兼容两种：带 format 包装的、以及直接一个模板对象的
+        const tpl = (
+          parsed.format === 'cv-studio-template' ? parsed.template : parsed
+        ) as ConfigTemplate | undefined
+        if (!tpl || typeof tpl !== 'object' || !tpl.target || !tpl.options) {
+          failed++
+          continue
+        }
+        saveTemplate({
+          ...tpl,
+          id: '', // 强制新 id，不覆盖本地同名模板
+          builtin: false,
+          name: `${tpl.name || '导入的模板'}`,
+          note: tpl.note || '',
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        })
+        imported++
+      } catch {
+        failed++
+      }
+    }
+
+    return { imported, failed, templates: listTemplates() }
   })
 
   // ---- 历史记录 ---------------------------------------------------------

@@ -67,6 +67,9 @@ export default function TemplatesPage(): React.JSX.Element {
   const [confirmId, setConfirmId] = React.useState<string | null>(null)
   const [deletingId, setDeletingId] = React.useState<string | null>(null)
   const [applyingId, setApplyingId] = React.useState<string | null>(null)
+  // 导入 / 导出：都是走系统文件对话框，可能停留几秒，所以要有个进行中状态
+  const [importing, setImporting] = React.useState(false)
+  const [exportingId, setExportingId] = React.useState<string | null>(null)
 
   // ---- 批量 ----
   const [rootDraft, setRootDraft] = React.useState('')
@@ -169,6 +172,47 @@ export default function TemplatesPage(): React.JSX.Element {
     }
   }
 
+  /**
+   * 导出单个模板到 .cvtpl.json。
+   * 用户取消对话框时返回 null，不提示（取消不是错误）。
+   */
+  const onExport = async (t: ConfigTemplate): Promise<void> => {
+    setExportingId(t.id)
+    try {
+      const path = await window.api.exportTemplate(t)
+      if (path) notify('ok', `已导出到 ${path}`)
+    } catch (err) {
+      notify('err', `导出失败：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setExportingId(null)
+    }
+  }
+
+  /**
+   * 导入模板：可以一次选多个 .json。
+   * 导入的模板会拿到新 id，不会覆盖本地同名模板 —— 别人给的模板不该顶掉你手里那份。
+   */
+  const onImport = async (): Promise<void> => {
+    setImporting(true)
+    try {
+      const res = await window.api.importTemplates()
+      if (!res) return // 用户取消
+      await refreshTemplates()
+      if (res.failed > 0) {
+        notify(
+          res.imported > 0 ? 'warn' : 'err',
+          `导入完成：成功 ${res.imported} 个，失败 ${res.failed} 个（文件格式不对或不是模板）`
+        )
+      } else if (res.imported > 0) {
+        notify('ok', `已导入 ${res.imported} 个模板`)
+      }
+    } catch (err) {
+      notify('err', `导入失败：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const copyJson = async (): Promise<void> => {
     if (!viewing) return
     try {
@@ -256,7 +300,7 @@ export default function TemplatesPage(): React.JSX.Element {
   return (
     <>
       <PageHeader
-        title="模板与配置"
+        title="模板"
         subtitle={`${templates.length} 个模板 · 不需要先选工程也能新建和编辑`}
         actions={
           <>
@@ -269,6 +313,17 @@ export default function TemplatesPage(): React.JSX.Element {
             >
               {refreshing ? <Spinner /> : <Icons.refresh />}
               刷新
+            </Button>
+            {/* 导入：从 .cvtpl.json 读一个或多个模板，不覆盖本地同名模板（会给新 id） */}
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={importing}
+              onClick={() => void onImport()}
+              title="从 .json 文件导入模板（可多选）"
+            >
+              {importing ? <Spinner /> : <Icons.folder />}
+              导入
             </Button>
             <Button size="sm" variant="primary" onClick={openNew}>
               <Icons.write />
@@ -396,6 +451,16 @@ export default function TemplatesPage(): React.JSX.Element {
                   <Button size="sm" onClick={() => setViewing(t)}>
                     <Icons.eye />
                     JSON
+                  </Button>
+                  {/* 导成 .cvtpl.json，可以发给别人或存起来 */}
+                  <Button
+                    size="sm"
+                    disabled={exportingId === t.id}
+                    onClick={() => void onExport(t)}
+                    title="导出成 .json 文件，可以分享或备份"
+                  >
+                    {exportingId === t.id ? <Spinner /> : null}
+                    导出
                   </Button>
                   {t.builtin ? (
                     <Button size="sm" variant="ghost" disabled title="内置模板不能删除">

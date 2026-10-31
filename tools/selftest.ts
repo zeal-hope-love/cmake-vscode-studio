@@ -1834,6 +1834,66 @@ check(
 
 rmSync(sandbox, { recursive: true, force: true })
 
+// ==========================================================================
+// 16. 模板导入 / 导出的格式约定
+//
+// 导出写成 { format, version, exportedAt, template } 而不是裸模板对象；
+// 导入要同时认「带包装的」和「裸模板」（兼容手写的文件）。
+// 这段逻辑在 ipc.ts 里，没法直接调（依赖 electron），所以这里测同一套判定。
+// ==========================================================================
+
+section('16. 模板导入 / 导出格式')
+
+/** 复刻 ipc.ts 里导入时的解析逻辑 */
+function parseTemplateFile(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const tpl = (parsed.format === 'cv-studio-template' ? parsed.template : parsed) as
+      | Record<string, unknown>
+      | undefined
+    if (!tpl || typeof tpl !== 'object' || !tpl.target || !tpl.options) return null
+    return tpl
+  } catch {
+    return null
+  }
+}
+
+const sampleTpl = {
+  id: 'abc',
+  name: '测试模板',
+  note: '说明',
+  createdAt: 1,
+  updatedAt: 1,
+  target: { editor: 'vscode' },
+  options: { device: 'STM32F407IGH6' }
+}
+
+check(
+  '模板导入：认带 format 包装的文件',
+  (() => {
+    const wrapped = JSON.stringify({ format: 'cv-studio-template', version: 1, template: sampleTpl })
+    const t = parseTemplateFile(wrapped)
+    return t !== null && t.name === '测试模板'
+  })()
+)
+check(
+  '模板导入：也认裸模板（兼容手写文件）',
+  (() => {
+    const t = parseTemplateFile(JSON.stringify(sampleTpl))
+    return t !== null && t.name === '测试模板'
+  })()
+)
+check('模板导入：缺 target 的文件被拒绝', parseTemplateFile(JSON.stringify({ name: 'x' })) === null)
+check('模板导入：非 JSON 被拒绝', parseTemplateFile('not json at all') === null)
+check(
+  '模板导入：空 options 也能进（老模板可能没填参数）',
+  (() => {
+    const t = parseTemplateFile(JSON.stringify({ target: {}, options: {} }))
+    return t !== null
+  })()
+)
+
+// ==========================================================================
 section('结果')
 console.log(`  共 ${checks} 项检查，失败 ${failures} 项`)
 if (failures > 0) {

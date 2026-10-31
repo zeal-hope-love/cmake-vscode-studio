@@ -802,6 +802,10 @@ export const IPC = {
   templateList: 'template:list',
   templateSave: 'template:save',
   templateDelete: 'template:delete',
+  /** 导出模板到 .json 文件（弹保存对话框） */
+  templateExport: 'template:export',
+  /** 从 .json 文件导入模板（弹打开对话框） */
+  templateImport: 'template:import',
   historyList: 'history:list',
   historyAdd: 'history:add',
   historyRemove: 'history:remove',
@@ -904,6 +908,16 @@ export interface StudioApi {
   listTemplates(): Promise<ConfigTemplate[]>
   saveTemplate(template: ConfigTemplate): Promise<ConfigTemplate[]>
   deleteTemplate(id: string): Promise<ConfigTemplate[]>
+  /**
+   * 导出模板到文件。
+   * 返回保存后的路径；用户取消返回 null。
+   */
+  exportTemplate(template: ConfigTemplate): Promise<string | null>
+  /**
+   * 从文件导入模板。
+   * 返回导入后的模板列表 + 成功/失败条数；用户取消返回 null。
+   */
+  importTemplates(): Promise<{ imported: number; failed: number; templates: ConfigTemplate[] } | null>
   applyTemplateToProjects(request: BatchRequest): Promise<BatchResult>
 
   listHistory(): Promise<HistoryEntry[]>

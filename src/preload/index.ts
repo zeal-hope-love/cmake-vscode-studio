@@ -148,6 +148,14 @@ const api: StudioApi = {
   saveTemplate: (template) =>
     ipcRenderer.invoke(IPC.templateSave, template) as Promise<ConfigTemplate[]>,
   deleteTemplate: (id) => ipcRenderer.invoke(IPC.templateDelete, id) as Promise<ConfigTemplate[]>,
+  exportTemplate: (template) =>
+    ipcRenderer.invoke(IPC.templateExport, template) as Promise<string | null>,
+  importTemplates: () =>
+    ipcRenderer.invoke(IPC.templateImport) as Promise<{
+      imported: number
+      failed: number
+      templates: ConfigTemplate[]
+    } | null>,
   listHistory: () => ipcRenderer.invoke(IPC.historyList) as Promise<HistoryEntry[]>,
   addHistory: (entry) => ipcRenderer.invoke(IPC.historyAdd, entry) as Promise<HistoryEntry[]>,
   removeHistory: (id) => ipcRenderer.invoke(IPC.historyRemove, id) as Promise<HistoryEntry[]>,
