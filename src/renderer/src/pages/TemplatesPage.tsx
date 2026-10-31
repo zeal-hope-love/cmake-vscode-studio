@@ -42,6 +42,9 @@ export default function TemplatesPage(): React.JSX.Element {
   const settings = useStudio((s) => s.settings)
   const candidates = useStudio((s) => s.candidates)
   const refreshTemplates = useStudio((s) => s.refreshTemplates)
+  /** 已安装的模块包 —— 用来生成「每个包一个 tab」 */
+  const packs = useStudio((s) => s.packs)
+  const refreshPacks = useStudio((s) => s.refreshPacks)
   const refreshCandidates = useStudio((s) => s.refreshCandidates)
   const saveCurrentAsTemplate = useStudio((s) => s.saveCurrentAsTemplate)
   const saveTemplate = useStudio((s) => s.saveTemplate)
@@ -73,17 +76,28 @@ export default function TemplatesPage(): React.JSX.Element {
   const [exportingId, setExportingId] = React.useState<string | null>(null)
 
   /**
-   * 当前在看待哪一类模板。
+   * 当前在看哪个来源的模板。
    *
-   * 「工程配置模板」管的是 `.vscode` 那四份文件（和具体工程无关的那套配置）；
-   * 「模块包模板」管的是每个模块包自己的一套参数（VT13 接哪个串口、VOFA 发多快）。
-   * 两者存储分开、用途不同，但在这一页用 tab 归到一起 —— 用户想「找模板」时
-   * 不该先记住它存在哪个分类下。
+   * `'project'` = 工程配置（`.vscode` 那四份文件）；
+   * 其它值是**模块包 id**（`remote-vt13` / `vofa`…），各自一个 tab。
+   *
+   * 为什么按包拆 tab 而不是「工程配置 / 模块包」两栏：后者的列表里
+   * 遥控和 VOFA 的模板混在一起，还得看每行的小字才知道归属。装了几个包
+   * 就有几个 tab，点哪个只看哪个，一眼就明白。
    */
-  const [tab, setTab] = React.useState<'project' | 'pack'>('project')
+  const [tab, setTab] = React.useState<string>('project')
 
   /** 模块包模板 */
   const [presets, setPresets] = React.useState<PackPreset[]>([])
+
+  /** 当前 tab 对应的包（`'project'` 时为 null）；导出和标题都要用，所以提前算 */
+  const activePack = React.useMemo(() => packs.find((p) => p.id === tab) ?? null, [packs, tab])
+
+  /** 当前 tab 里的模板数量（工程配置 tab 时是模板数，否则是这个包的预设数） */
+  const currentTabCount = React.useMemo(
+    () => (tab === 'project' ? templates.length : presets.filter((p) => p.packId === tab).length),
+    [tab, templates.length, presets]
+  )
 
   /** 格式说明弹窗内容；非 null 时显示 */
   const [formatDoc, setFormatDoc] = React.useState<string | null>(null)
@@ -113,7 +127,9 @@ export default function TemplatesPage(): React.JSX.Element {
     void refreshTemplates()
     void refreshCandidates()
     void refreshPresets()
-  }, [refreshTemplates, refreshCandidates, refreshPresets])
+    // tab 是包生成的，包列表得先到位
+    if (packs.length === 0) void refreshPacks()
+  }, [refreshTemplates, refreshCandidates, refreshPresets, refreshPacks, packs.length])
 
   // 工程名变了就重置建议的模板名（用户手动输入的名字不会被覆盖）
   React.useEffect(() => {
@@ -220,18 +236,30 @@ export default function TemplatesPage(): React.JSX.Element {
   }
 
   /**
-   * 全部导出：两类模板写进同一个文件。
+   * 导出当前 tab 里的全部模板。
    *
-   * 用户想「把调好的一整套东西备份下来」时不用在两个分类里各点一次。
+   * 按 tab 导出而不是「一次导出所有」：用户最常需要的是
+   * 「把 VT13 这套发给队友」，不该顺带把整个工程配置也塞进去。
    */
   const onExportAll = async (): Promise<void> => {
     try {
+      /*
+       * 导出**当前 tab** 里的模板。
+       *
+       * 在「工程质量」tab 就导工程模板，在「遥控模块 VT13」tab 就导这个包的模板 ——
+       * 想整套备份的话切到工程配置导一次、再各自导一次也不麻烦；
+       * 但按 tab 导出能避免「我只想给队友 VT13 的模板，结果把整个配置也带出去了」。
+       */
+      const isProjectTab = tab === 'project'
       const path = await window.api.exportTemplate({
-        projectTemplates: templates,
-        packPresets: presets,
-        defaultName: 'CV Studio 模板'
+        projectTemplates: isProjectTab ? templates : [],
+        packPresets: isProjectTab ? [] : presets.filter((p) => p.packId === tab),
+        defaultName: isProjectTab ? 'CV Studio 工程配置模板' : `${activePack?.name ?? tab} 模板`
       })
-      if (path) notify('ok', `已导出 ${templates.length + presets.length} 个模板到 ${path}`)
+      if (path) {
+        const n = isProjectTab ? templates.length : presets.filter((p) => p.packId === tab).length
+        notify('ok', `已导出 ${n} 个模板到 ${path}`)
+      }
     } catch (err) {
       notify('err', `导出失败：${err instanceof Error ? err.message : String(err)}`)
     }
@@ -367,13 +395,26 @@ export default function TemplatesPage(): React.JSX.Element {
     )
   }
 
-  const totalCount = templates.length + presets.length
+  /**
+   * 每个已安装模块包一个 tab。
+   *
+   * 名称用包自己的显示名（「遥控模块 VT13」「VOFA+ 在线调参」），
+   * 计数只算这个包的模板。
+   */
+  const packTabs = packs.map((p) => ({
+    id: p.id,
+    name: p.name,
+    count: presets.filter((x) => x.packId === p.id).length
+  }))
+
+  /** 当前 tab 下的模块包模板 */
+  const visiblePresets = tab === 'project' ? [] : presets.filter((x) => x.packId === tab)
 
   return (
     <>
       <PageHeader
         title="模板"
-        subtitle={`${templates.length} 个工程配置模板 · ${presets.length} 个模块包模板 · 不需要先选工程`}
+        subtitle={`${templates.length} 个工程配置 · ${presets.length} 个模块包模板 · 不需要先选工程`}
         actions={
           <>
             <Button
@@ -403,12 +444,12 @@ export default function TemplatesPage(): React.JSX.Element {
             <Button
               size="sm"
               variant="ghost"
-              disabled={totalCount === 0}
+              disabled={currentTabCount === 0}
               onClick={() => void onExportAll()}
-              title="把这个文件里所有模板都导出（两类都带上）"
+              title={`导出「${tab === 'project' ? '工程配置' : (activePack?.name ?? tab)}」里的全部模板`}
             >
               <Icons.write />
-              全部导出
+              导出本页
             </Button>
             <Button size="sm" variant="primary" onClick={openNew}>
               <Icons.write />
@@ -419,30 +460,36 @@ export default function TemplatesPage(): React.JSX.Element {
       />
 
       <PageBody>
-        {/* ---- 分类切换 ---- */}
+        {/* ---- 分类切换 ----
+            按「来源」分：工程配置一份，然后**每个模块包各一份**。
+            不做成「工程配置 / 模块包」两栏 —— 那样遥控和 VOFA 的模板
+            挤在一个列表里，还得看每行的小字才知道是哪个包的。 */}
         <div className="segmented">
           <button
             type="button"
             className={`segmented__item${tab === 'project' ? ' segmented__item--active' : ''}`}
             onClick={() => setTab('project')}
           >
-            工程配置模板
+            工程配置
             <span className="segmented__count">{templates.length}</span>
           </button>
-          <button
-            type="button"
-            className={`segmented__item${tab === 'pack' ? ' segmented__item--active' : ''}`}
-            onClick={() => setTab('pack')}
-          >
-            模块包模板
-            <span className="segmented__count">{presets.length}</span>
-          </button>
+          {packTabs.map((pt) => (
+            <button
+              key={pt.id}
+              type="button"
+              className={`segmented__item${tab === pt.id ? ' segmented__item--active' : ''}`}
+              onClick={() => setTab(pt.id)}
+            >
+              {pt.name}
+              <span className="segmented__count">{pt.count}</span>
+            </button>
+          ))}
         </div>
 
-        {tab === 'pack' ? (
+        {tab !== 'project' ? (
           <Card
-            title="模块包模板"
-            hint="每个模块包自己的一套参数，装模块时可以直接套用"
+            title={activePack ? `${activePack.name} 的模板` : '模块包模板'}
+            hint={activePack?.summary}
             actions={
               <Button size="sm" variant="ghost" onClick={() => void onShowFormatDoc()}>
                 <Icons.info />
@@ -450,14 +497,14 @@ export default function TemplatesPage(): React.JSX.Element {
               </Button>
             }
           >
-            {presets.length === 0 ? (
+            {visiblePresets.length === 0 ? (
               <Alert kind="info">
-                还没有模块包模板。到左侧「扩展」里打开一个模块（比如遥控模块 VT13），
-                在页面底部的「存为模板」把当前这套参数存下来，之后就能在这里管理和导出。
+                这个模块还没有模板。到左侧「扩展」里打开它，
+                在「执行选项」里把当前这套参数存下来，之后就能在这里管理和导出。
               </Alert>
             ) : (
               <div className="list">
-                {presets.map((p) => (
+                {visiblePresets.map((p) => (
                   <div key={p.id} className="list__row" style={{ alignItems: 'center' }}>
                     <div className="grow">
                       <div className="small">
