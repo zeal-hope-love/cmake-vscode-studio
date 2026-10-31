@@ -1,0 +1,152 @@
+{
+  "id": "remote-vt13",
+  "name": "遥控模块 VT13",
+  "summary": "把工程的遥控从旧 SBUS（18 字节、USART3）换成 VT13 新协议（21 字节 + CRC16、USART1 + DMA 双缓冲）。会改 .ioc 并调 CubeMX 重新生成，再替换 3 个文件、改造 10 个业务文件。",
+  "version": "1.0.0",
+  "icon": "remote",
+  "params": [
+    {
+      "key": "usart",
+      "label": "接 VT13 接收机的串口",
+      "type": "enum",
+      "default": "USART1",
+      "options": [
+        "USART1"
+      ],
+      "hint": "开发板丝印 UART2 口接出的就是 USART1。改这里需要同时改代码里的 huart1，目前只支持 USART1。"
+    },
+    {
+      "key": "demoMode",
+      "label": "演示模式（不改 .ioc、不调 CubeMX）",
+      "type": "bool",
+      "default": false,
+      "hint": "打开后只做代码改造，跳过 CubeMX 重新生成。用来在没装 CubeMX 的机器上试效果，或者你已经手动配好了外设。"
+    }
+  ],
+  "files": [
+    {
+      "from": "remote_control.c",
+      "to": "application/remote_control.c",
+      "note": "整文件替换。包含 21 字节帧解析、CRC16 校验、DMA 双缓冲、掉线重连"
+    },
+    {
+      "from": "remote_control.h",
+      "to": "application/remote_control.h",
+      "note": "整文件替换。remote_data_t 位域结构覆盖旧的 RC_ctrl_t"
+    },
+    {
+      "from": "bsp_rc.c",
+      "to": "bsp/boards/bsp_rc.c",
+      "note": "整文件替换。DMA 双缓冲初始化（M0AR/M1AR/DBM）"
+    }
+  ],
+  "transform": [
+    {
+      "file": "application/chassis_behaviour.c",
+      "note": "底盘速度解算 + 模式切换"
+    },
+    {
+      "file": "application/chassis_behaviour.h"
+    },
+    {
+      "file": "application/gimbal_behaviour.c",
+      "note": "云台 yaw/pitch"
+    },
+    {
+      "file": "application/gimbal_behaviour.h"
+    },
+    {
+      "file": "application/shoot.c",
+      "note": "发射状态机（需要专门的逻辑改造，见 stateMachine）"
+    },
+    {
+      "file": "application/shoot.h"
+    },
+    {
+      "file": "application/calibrate_task.c"
+    },
+    {
+      "file": "application/servo_task.c"
+    },
+    {
+      "file": "application/usb_task.c"
+    },
+    {
+      "file": "application/chassis_task.h",
+      "note": "底盘任务头文件，结构体里有 RC_ctrl_t 指针"
+    },
+    {
+      "file": "application/gimbal_task.h",
+      "note": "云台任务头文件，同上"
+    }
+  ],
+  "stateMachine": {
+    "file": "application/shoot.c",
+    "oldStateFields": [
+      "last_s"
+    ],
+    "newStateFields": [
+      "last_sw",
+      "last_fn_1",
+      "last_trigger"
+    ],
+    "note": "需要把人家的单变量 last_s 拆成三个，分别跟踪开关、功能键、扳机键"
+  },
+  "requires": {
+    "headers": [
+      "main.h",
+      "cmsis_os.h",
+      "usart.h"
+    ],
+    "optionalHeaders": [
+      "struct_typedef.h",
+      "bsp_usart.h",
+      "detect_task.h",
+      "crc.h"
+    ],
+    "symbols": [
+      "huart1",
+      "hdma_usart1_rx"
+    ]
+  },
+  "patches": [
+    {
+      "file": "CMakeLists.txt",
+      "action": "add-sources",
+      "sources": [
+        "application/remote_control.c"
+      ],
+      "note": "remote_control.c 原工程可能已经在构建里了（同名），本步骤幂等；bsp/boards/bsp_rc.c 同理"
+    },
+    {
+      "file": "Src/stm32f4xx_it.c",
+      "action": "comment-out-handler",
+      "handler": "USART1_IRQHandler",
+      "note": "remote_control.c 自己实现了 USART1_IRQHandler，CubeMX 生成的同名函数会导致链接期 duplicate symbol。每次跑完 CubeMX 都要重新屏蔽一次"
+    }
+  ],
+  "iocChanges": {
+    "note": "按语义键修改，不按行号。CubeMX 重新生成后会重排无关字段，按行号改明天就写错键",
+    "usart": {
+      "VirtualMode": "VM_ASYNC",
+      "BaudRate": 921600
+    },
+    "ipParameters": "VirtualMode,BaudRate",
+    "nvic": "true\\:4\\:0\\:true\\:false\\:false\\:false\\:true\\:true\\:true",
+    "dma": {
+      "ident": "USART1_RX",
+      "streamCandidates": [
+        "DMA2_Stream5",
+        "DMA2_Stream2"
+      ],
+      "channel": "DMA_CHANNEL_4",
+      "modeNote": "必须是 NORMAL 不是 CIRCULAR —— bsp_rc.c 用 M0AR/M1AR/DBM 双缓冲，CIRCULAR 下这些全失效"
+    }
+  },
+  "manualSteps": [
+    "用杜邦线把 VT13 接收机的 SBUS 口接到开发板丝印 **UART2**（= STM32 的 USART1）",
+    "确认 VT13 已经和遥控器对频，接收机指示常亮",
+    "烧录后如果遥控无反应：先看「检查与清理」里 USART1 有没有报错，再确认 `.ioc` 里 DMA 是 NORMAL 模式",
+    "回到旧版本：用「历史与恢复」里的快照还原（工具在动任何文件前会自动存快照）"
+  ]
+}

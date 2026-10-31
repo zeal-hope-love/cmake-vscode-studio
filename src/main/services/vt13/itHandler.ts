@@ -96,11 +96,24 @@ export function isHandlerCommentedOut(text: string, handler = 'USART1_IRQHandler
   const sigIdx = lines.findIndex((ln) =>
     new RegExp(`^\\s*void\\s+${handler}\\s*\\(\\s*void\\s*\\)`).test(ln)
   )
-  if (sigIdx < 0) return true // 压根没有这个函数，等价于「不会冲突」
+  /*
+   * 没有这个函数 → 不算「已屏蔽」。
+   *
+   * 早先这里 return true（理由是「没有函数就不会冲突」），但那样会让验收
+   * 静默通过 —— 用户看到「已屏蔽 ✓」其实什么也没屏蔽，只是 CubeMX 这个版本
+   * 恰好没生成。真相要显示出来，所以这里返回 false，由调用方区分
+   * 「不需要屏蔽」和「屏蔽失败」。
+   */
+  if (sigIdx < 0) return false
   for (let i = Math.max(0, sigIdx - 10); i < sigIdx; i++) {
     if (/^\s*#\s*if\s+0\b/.test(lines[i])) return true
   }
   return false
+}
+
+/** 文件里到底有没有这个函数（区分「不需要屏蔽」和「屏蔽失败」） */
+export function hasHandler(text: string, handler = 'USART1_IRQHandler'): boolean {
+  return new RegExp(`^\\s*void\\s+${handler}\\s*\\(\\s*void\\s*\\)`, 'm').test(text)
 }
 
 /** 统计某个符号在源码里出现了几次（验收项 [5]：符号必须唯一） */

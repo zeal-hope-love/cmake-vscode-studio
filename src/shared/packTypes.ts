@@ -24,6 +24,8 @@ export interface PackParam {
 export interface PackFileSpec {
   from: string
   to: string
+  /** 给人看的说明：这个文件是干什么的、为什么要替换 */
+  note?: string
 }
 
 export interface PackGeneratedSpec {
@@ -31,7 +33,11 @@ export interface PackGeneratedSpec {
   to: string
 }
 
-export type PackPatchAction = 'add-sources' | 'insert-task' | 'define'
+export type PackPatchAction =
+  | 'add-sources'
+  | 'insert-task'
+  | 'define'
+  | 'comment-out-handler'
 
 export interface PackPatchSpec {
   file: string
@@ -43,8 +49,48 @@ export interface PackPatchSpec {
   /** define 用 */
   name?: string
   value?: string
+  /** comment-out-handler 用 */
+  handler?: string
   /** 找不到目标就跳过（不报错） */
   optional?: boolean
+  note?: string
+}
+
+// --------------------------------------------------------------------------
+// VT13 这类「移植包」才用得上的扩展字段
+//
+// 之所以不放进 PackManifest 主体，是因为常规包（比如 vofa）只需要
+// files + generated + patches。移植包要动的东西多得多：业务文件的字段替换、
+// 状态机重写、.ioc 语义修改。这些字段对常规包是噪音，所以做成可选。
+// --------------------------------------------------------------------------
+
+/** 业务文件的字段替换（不整文件覆盖，只改访问遥控数据的表达式） */
+export interface PackTransformSpec {
+  file: string
+  note?: string
+}
+
+/** 需要改状态机的文件（目前只有 shoot.c 用到） */
+export interface PackStateMachineSpec {
+  file: string
+  /** 旧代码里的状态变量 */
+  oldStateFields: string[]
+  /** 新代码要维护的状态变量 */
+  newStateFields: string[]
+  note?: string
+}
+
+/** `.ioc` 的语义化修改 */
+export interface PackIocChanges {
+  usart?: Record<string, string | number>
+  ipParameters?: string
+  nvic?: string
+  dma?: {
+    ident: string
+    streamCandidates?: string[]
+    channel?: string
+    modeNote?: string
+  }
   note?: string
 }
 
@@ -66,6 +112,15 @@ export interface PackManifest {
   requires: PackRequires
   patches: PackPatchSpec[]
   manualSteps: string[]
+
+  // ---- 移植包专属（可选）----
+  /** 业务文件的字段替换 */
+  transform?: PackTransformSpec[]
+  /** 需要改状态机的文件 */
+  stateMachine?: PackStateMachineSpec
+  /** `.ioc` 的语义化修改 */
+  iocChanges?: PackIocChanges
+
   /** 包所在目录（绝对路径），运行时补上 */
   dir?: string
 }
