@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, resolve } from 'node:path'
 import type { RestoreResult, SnapshotMeta } from '@shared/types'
 import { resolveInsideProject } from './writer'
+import { writeFileWithRetry } from './fileWrite'
 
 /** 每个工程最多保留多少条快照 */
 const MAX_SNAPSHOTS_PER_PROJECT = 20
@@ -56,6 +57,72 @@ function projectDir(projectRoot: string): string {
  * 没有任何需要记录的内容时返回 null（不产生空快照）。
  */
 export function captureSnapshot(projectRoot: string, entries: SnapshotEntry[]): string | null {
+  return captureSnapshotDetailed(projectRoot, entries).id
+}
+
+/**
+ * 保存快照，**把失败原因一起返回**。
+ *
+ * 为什么需要这个版本：`captureSnapshot` 失败只返回 null，
+ * 调用方拿不到原因，界面只能显示「快照存不下」—— 用户没法自救，
+ * 我们自己也排查不了（stderr 在打包版里看不到）。
+ *
+ * 移植流程用这个版本，失败时把 `error` 直接显示在界面上。
+ */
+export function captureSnapshotDetailed(
+  projectRoot: string,
+  entries: SnapshotEntry[]
+): { id: string | null; error?: string } {
+  if (!entries.length) return { id: null, error: '没有需要快照的文件' }
+
+  let dir: string
+  try {
+    dir = projectDir(projectRoot)
+  } catch (err) {
+    return {
+      id: null,
+      error: `算不出快照目录：${err instanceof Error ? err.message : String(err)}`
+    }
+  }
+
+  try {
+    mkdirSync(dir, { recursive: true })
+
+    const id = `${Date.now()}-${randomUUID().slice(0, 8)}`
+    const snapshot: SnapshotFile = {
+      id,
+      projectRoot,
+      createdAt: Date.now(),
+      fileCount: entries.length,
+      newFileCount: entries.filter((e) => e.previous === null).length,
+      files: entries
+    }
+
+    /*
+     * 用带重试的写入 —— 实测 Electron 进程写文件会偶发 EPERM
+     * （同一路径用 Node 进程写就正常），尤其快照这种「一次写几百 KB、
+     * 几十个文件内容」的场景。不重试的话移植流程第一步就卡死。
+     * 详见 fileWrite.ts 的文件说明。
+     */
+    const w = writeFileWithRetry(join(dir, `${id}.json`), JSON.stringify(snapshot), '快照')
+    if (!w.ok) {
+      return { id: null, error: w.error }
+    }
+    pruneOldSnapshots(dir)
+    return { id }
+  } catch (err) {
+    const msg = err instanceof Error ? `${err.message}` : String(err)
+    const code = (err as NodeJS.ErrnoException).code ?? ''
+    console.error('[snapshot] 存快照失败：', msg, '| dir:', dir)
+    return {
+      id: null,
+      error: `写到 ${dir} 失败${code ? `（${code}）` : ''}：${msg}`
+    }
+  }
+}
+
+/** @deprecated 保留旧实现原因说明，见 captureSnapshotDetailed */
+function _legacyCaptureSnapshot(projectRoot: string, entries: SnapshotEntry[]): string | null {
   if (!entries.length) return null
 
   try {

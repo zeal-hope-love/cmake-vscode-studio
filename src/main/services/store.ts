@@ -6,6 +6,7 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
+import { writeFileWithRetry } from './fileWrite'
 
 /**
  * 历史上用过的数据目录名，**由新到旧**排列。
@@ -145,37 +146,13 @@ function sleepMs(ms: number): void {
  * 忙等 1 秒对主进程的影响可以忽略（本来也在等 IO）。
  */
 export function writeStoreFile(filePath: string, value: unknown): void {
-  mkdirSync(dirname(filePath), { recursive: true })
   const text = JSON.stringify(value, null, 2)
-
-  /**
-   * 退避间隔（毫秒）。
-   *
-   * 从 10ms 起步、上限 200ms，总等待约 0.9 秒。
-   * 定这么多轮是因为实测：Electron 启动瞬间几个子进程（GPU、网络、渲染）
-   * 会同时初始化各自的缓存目录，`settings.json` 的冲突窗口能持续到 1 秒。
-   */
-  const backoff = [10, 20, 40, 80, 160, 200, 200, 200]
-  let lastErr: unknown = null
-
-  for (let i = 0; i <= backoff.length; i++) {
-    try {
-      writeFileSync(filePath, text, 'utf8')
-      return
-    } catch (err) {
-      lastErr = err
-      const code = (err as NodeJS.ErrnoException).code
-      // 只有「文件被占用 / 没权限」这类才值得重试；其它错误立刻抛
-      if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') throw err
-      if (i >= backoff.length) break
-      sleepMs(backoff[i])
-    }
+  const r = writeFileWithRetry(filePath, text, '设置文件')
+  if (!r.ok) {
+    throw new Error(
+      `${r.error}\n` +
+        `常见原因：同时开着两个窗口（dev 模式 + 安装版），或杀毒软件正在扫描这个文件。` +
+        `先关掉多余的窗口再试。`
+    )
   }
-
-  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr)
-  throw new Error(
-    `写不进去：${filePath}\n${msg}\n` +
-      `常见原因：同时开着两个窗口（dev 模式 + 安装版），或杀毒软件正在扫描这个文件。` +
-      `先关掉多余的窗口再试。`
-  )
 }

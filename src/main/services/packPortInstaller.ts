@@ -27,7 +27,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import type { PackManifest } from '../../shared/packTypes'
-import { captureSnapshot, type SnapshotEntry } from './snapshotStore'
+import { captureSnapshotDetailed, type SnapshotEntry } from './snapshotStore'
 import { recordWrite } from './historyStore'
 import {
   preflight,
@@ -78,7 +78,11 @@ export interface PortOptions {
  *
  * 宁可多存 —— 快照多存几十个文件只是几百 KB，漏存则意味着改坏了回不去。
  */
-function collectSnapshotEntries(root: string, pack: PackManifest, iocPath: string | null): SnapshotEntry[] {
+export function collectSnapshotEntries(
+  root: string,
+  pack: PackManifest,
+  iocPath: string | null
+): SnapshotEntry[] {
   const entries: SnapshotEntry[] = []
   const seen = new Set<string>()
 
@@ -139,7 +143,7 @@ function toRelative(root: string, abs: string): string {
 /** 把相对路径列表交给快照，返回快照 id */
 function snapshotAll(root: string, entries: SnapshotEntry[]): string | null {
   // 只存「会变」的：内容为 null 的（新建文件）也要存，还原时才删得掉
-  return captureSnapshot(root, entries)
+  return captureSnapshotDetailed(root, entries).id
 }
 
 /**
@@ -189,10 +193,12 @@ export async function runPortInstall(opts: PortOptions): Promise<PortResult> {
   // ---- ② 快照（必须在任何写操作之前）----
   emit({ id: 'snapshot', label: '存快照', status: 'running' })
   const entries = collectSnapshotEntries(root, pack, pf.iocPath)
-  const snapshotId = snapshotAll(root, entries)
+  // 用带原因的版本：失败时把原因直接显示在界面上，用户能看出是哪一步不行
+  const { id: snapshotId, error: snapshotError } = captureSnapshotDetailed(root, entries)
   if (!snapshotId) {
-    errors.push('没能存下快照，为避免改坏了无法还原，已中止（一个文件都没动）')
-    emit({ id: 'snapshot', label: '存快照', status: 'err', detail: '快照存不下，已中止' })
+    const why = snapshotError ?? '未知原因'
+    errors.push(`没能存下快照（${why}）。为避免改坏了无法还原，已中止，一个文件都没动。`)
+    emit({ id: 'snapshot', label: '存快照', status: 'err', detail: why })
     return {
       ok: false,
       preflight: pf,
