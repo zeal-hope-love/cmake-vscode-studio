@@ -41,7 +41,12 @@ export function TitleBar(): React.JSX.Element {
       <span className="titlebar__path" title={projectRoot}>
         {projectRoot ? projectRoot : '尚未选择工程'}
       </span>
-      {project && <span className="badge badge--accent">{project.name}</span>}
+      {/*
+        这里**不再额外显示工程名徽标**。
+        路径末尾已经是工程目录名（`...\Hero_9.1\Hero_9.1`），再挂一个
+        「Hero_9.1」徽标就是把同一个词写两遍，还和路径末尾挤在一起。
+        想知道当前是哪个工程，看路径最后一段就够了。
+      */}
 
       <div className="titlebar__spacer" />
 

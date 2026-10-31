@@ -926,6 +926,15 @@ textarea {
   background: var(--bg-raised);
   color: var(--text-muted);
   white-space: nowrap;
+  /*
+   * 徽标不能被父容器压缩。
+   *
+   * 截图里「CMSIS-DAP / DAP-Link」被挤成「MSIS-DAP / DAP-Link」——
+   * 第一个字被切掉了。原因是它作为 flex 子项参与收缩，而
+   * white-space: nowrap 只保证「不换行」，不保证「不被压窄」。
+   * 加上 flex-shrink: 0 之后，窗口窄时宁可让旁边的文字缩，徽标保持完整。
+   */
+  flex-shrink: 0;
 }
 
 .badge--ok {
@@ -1519,6 +1528,18 @@ html[data-theme='light'] .log {
   gap: 7px;
   flex-wrap: wrap;
   padding: 7px 2px 9px;
+}
+
+/*
+ * 这一行里的「· 生成参数」这类小标签：不收缩、不换行。
+ *
+ * 它们本来就是极短的词，被压缩只会让第一个字被吃掉（截图里
+ * 「CMSIS-DAP / DAP-Link」丢了个 C 就是这个原因）。
+ * 真正该让出空间的只有长文件名（.workflow__cfgname）和下拉框。
+ */
+.workflow__probe > .faint,
+.workflow__probe > .badge {
+  flex-shrink: 0;
 }
 
 /* 两步引导条里的模板下拉：紧凑一点，别抢了按钮的视线 */
