@@ -9,7 +9,19 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { applyPackInstall, planPackInstall } from './services/packInstaller'
 import { runPortInstall } from './services/packPortInstaller'
+import {
+  deletePackPreset,
+  listPackPresets,
+  listPackPresetsFor,
+  savePackPreset
+} from './services/packPresetStore'
 import { preflight } from './services/vt13/portRunner'
+import {
+  buildTemplateFile,
+  parseTemplateFile,
+  TEMPLATE_FORMAT_DOC,
+  type PackPreset
+} from '@shared/templateFormat'
 import {
   checkPackCompat,
   inspectProject,
@@ -582,35 +594,54 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
    * 误打开、或者将来格式变了你还能看出这是什么东西。导入时认 format 字段，
    * 不认就当作裸模板再试一次（兼容手写的文件）。
    */
-  ipcMain.handle(IPC.templateExport, async (_e, template: ConfigTemplate): Promise<string | null> => {
-    const win = getWindow()
-    // 文件名用模板名，去掉 Windows 不允许的字符
-    const safe = (template.name || 'template').replace(/[\\/:*?"<>|]/g, '_')
-    const options = {
-      title: '导出模板',
-      defaultPath: join(app.getPath('documents'), `${safe}.cvtpl.json`),
-      filters: [{ name: '模板文件', extensions: ['json'] }]
-    }
-    const result = win
-      ? await dialog.showSaveDialog(win, options)
-      : await dialog.showSaveDialog(options)
-    if (result.canceled || !result.filePath) return null
+/**
+   * 导出模板。
+   *
+   * 参数里可以同时带工程配置模板和模块包模板 —— 它们会写进**同一个文件**
+   * （格式见 `shared/templateFormat.ts`）。用户想备份「一整套东西」时，
+   * 一次导出就够了，不用在两个页面各点一次。
+   *
+   * @param defaultName 默认文件名（不含扩展名），一般传模板名或「全部模板」
+   */
+  ipcMain.handle(
+    IPC.templateExport,
+    async (
+      _e,
+      payload: { projectTemplates?: ConfigTemplate[]; packPresets?: PackPreset[]; defaultName?: string }
+    ): Promise<string | null> => {
+      const win = getWindow()
+      const projectTemplates = payload?.projectTemplates ?? []
+      const packPresets = payload?.packPresets ?? []
+      if (projectTemplates.length === 0 && packPresets.length === 0) return null
 
-    const payload = {
-      format: 'cv-studio-template',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      template
+      const safe = (payload?.defaultName || '模板').replace(/[\\/:*?"<>|]/g, '_')
+      const options = {
+        title: '导出模板',
+        defaultPath: join(app.getPath('documents'), `${safe}.cvstudio.json`),
+        filters: [{ name: '模板文件', extensions: ['json'] }]
+      }
+      const result = win
+        ? await dialog.showSaveDialog(win, options)
+        : await dialog.showSaveDialog(options)
+      if (result.canceled || !result.filePath) return null
+
+      const file = buildTemplateFile(projectTemplates, packPresets)
+      writeFileSync(result.filePath, JSON.stringify(file, null, 2), 'utf8')
+      return result.filePath
     }
-    writeFileSync(result.filePath, JSON.stringify(payload, null, 2), 'utf8')
-    return result.filePath
-  })
+  )
 
   /**
-   * 从 .json 文件导入模板，可以一次选多个。
+   * 从 .json 文件导入模板，可以一次选多个文件，每个文件里也可以有多条。
    *
-   * 导入的模板会拿到**新 id**（`id: ''` 交给 saveTemplate 生成），避免覆盖同名的
-   * 本地模板 —— 用户从别人那儿拿一份模板回来，不该把手里那份顶掉。
+   * 按每条记录的 `kind` 自动分流：工程配置模板进 templates.json，
+   * 模块包模板进 pack-presets.json。
+   *
+   * 导入的模板一律拿**新 id**，不覆盖本地同名模板 ——
+   * 别人给的模板不该把你手里那份顶掉。
+   *
+   * 模块包模板还会检查 `packId` 是否已安装：没装的包就把那条跳过并计数，
+   * 而不是存一个永远用不上的孤儿模板。
    */
   ipcMain.handle(IPC.templateImport, async () => {
     const win = getWindow()
@@ -624,37 +655,57 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
 
-    let imported = 0
-    let failed = 0
-    for (const p of result.filePaths) {
+    const installedPacks = new Set(listPacks().map((p) => p.id))
+    let importedProject = 0
+    let importedPack = 0
+    let skipped = 0
+    /** 被跳过的模块包 id，用来告诉用户「你缺哪个包」 */
+    const missingPacks = new Set<string>()
+
+    for (const filePath of result.filePaths) {
       try {
-        const raw = readFileSync(p, 'utf8')
-        const parsed = JSON.parse(raw) as Record<string, unknown>
-        // 兼容两种：带 format 包装的、以及直接一个模板对象的
-        const tpl = (
-          parsed.format === 'cv-studio-template' ? parsed.template : parsed
-        ) as ConfigTemplate | undefined
-        if (!tpl || typeof tpl !== 'object' || !tpl.target || !tpl.options) {
-          failed++
-          continue
+        const raw = readFileSync(filePath, 'utf8')
+        const parsed = parseTemplateFile(raw)
+        skipped += parsed.skipped
+
+        for (const tpl of parsed.projectTemplates) {
+          saveTemplate(tpl)
+          importedProject++
         }
-        saveTemplate({
-          ...tpl,
-          id: '', // 强制新 id，不覆盖本地同名模板
-          builtin: false,
-          name: `${tpl.name || '导入的模板'}`,
-          note: tpl.note || '',
-          createdAt: Date.now(),
-          updatedAt: Date.now()
-        })
-        imported++
+        for (const preset of parsed.packPresets) {
+          if (!installedPacks.has(preset.packId)) {
+            missingPacks.add(preset.packId)
+            skipped++
+            continue
+          }
+          savePackPreset(preset)
+          importedPack++
+        }
       } catch {
-        failed++
+        skipped++
       }
     }
 
-    return { imported, failed, templates: listTemplates() }
+    return {
+      importedProject,
+      importedPack,
+      imported: importedProject + importedPack,
+      skipped,
+      missingPacks: [...missingPacks],
+      templates: listTemplates(),
+      presets: listPackPresets()
+    }
   })
+
+  // ---- 模块包模板 -------------------------------------------------------
+  ipcMain.handle(IPC.packPresetList, async (_e, packId?: string) =>
+    packId ? listPackPresetsFor(packId) : listPackPresets()
+  )
+  ipcMain.handle(IPC.packPresetSave, async (_e, preset: PackPreset) => savePackPreset(preset))
+  ipcMain.handle(IPC.packPresetDelete, async (_e, id: string) => deletePackPreset(id))
+
+  /** 格式说明（给「复制格式说明」按钮用） */
+  ipcMain.handle(IPC.templateFormatDoc, async () => TEMPLATE_FORMAT_DOC)
 
   // ---- 历史记录 ---------------------------------------------------------
   ipcMain.handle(IPC.historyList, async () => listHistory())

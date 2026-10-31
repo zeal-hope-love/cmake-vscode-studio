@@ -42,6 +42,7 @@ import {
   type WriteRequest,
   type WriteResult
 } from '@shared/types'
+import type { PackPreset } from '@shared/templateFormat'
 import type {
   PackApplyResult,
   PackManifest,
@@ -158,14 +159,26 @@ const api: StudioApi = {
   saveTemplate: (template) =>
     ipcRenderer.invoke(IPC.templateSave, template) as Promise<ConfigTemplate[]>,
   deleteTemplate: (id) => ipcRenderer.invoke(IPC.templateDelete, id) as Promise<ConfigTemplate[]>,
-  exportTemplate: (template) =>
-    ipcRenderer.invoke(IPC.templateExport, template) as Promise<string | null>,
+  exportTemplate: (payload) =>
+    ipcRenderer.invoke(IPC.templateExport, payload) as Promise<string | null>,
   importTemplates: () =>
     ipcRenderer.invoke(IPC.templateImport) as Promise<{
       imported: number
-      failed: number
+      importedProject: number
+      importedPack: number
+      skipped: number
+      missingPacks: string[]
       templates: ConfigTemplate[]
+      presets: PackPreset[]
     } | null>,
+
+  listPackPresets: (packId) =>
+    ipcRenderer.invoke(IPC.packPresetList, packId) as Promise<PackPreset[]>,
+  savePackPreset: (preset) =>
+    ipcRenderer.invoke(IPC.packPresetSave, preset) as Promise<PackPreset[]>,
+  deletePackPreset: (id) =>
+    ipcRenderer.invoke(IPC.packPresetDelete, id) as Promise<PackPreset[]>,
+  getTemplateFormatDoc: () => ipcRenderer.invoke(IPC.templateFormatDoc) as Promise<string>,
   listHistory: () => ipcRenderer.invoke(IPC.historyList) as Promise<HistoryEntry[]>,
   addHistory: (entry) => ipcRenderer.invoke(IPC.historyAdd, entry) as Promise<HistoryEntry[]>,
   removeHistory: (id) => ipcRenderer.invoke(IPC.historyRemove, id) as Promise<HistoryEntry[]>,

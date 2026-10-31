@@ -32,6 +32,7 @@ import {
 } from '../components/ui'
 import { Icons } from '../components/icons'
 import { buildTemplateSkeleton, describeTarget } from '@shared/templateSkeleton'
+import type { PackPreset } from '@shared/templateFormat'
 import type { BatchResult, ConfigTemplate } from '@shared/types'
 import { TemplateEditor, emptyTemplate } from './TemplateEditor'
 
@@ -71,6 +72,22 @@ export default function TemplatesPage(): React.JSX.Element {
   const [importing, setImporting] = React.useState(false)
   const [exportingId, setExportingId] = React.useState<string | null>(null)
 
+  /**
+   * 当前在看待哪一类模板。
+   *
+   * 「工程配置模板」管的是 `.vscode` 那四份文件（和具体工程无关的那套配置）；
+   * 「模块包模板」管的是每个模块包自己的一套参数（VT13 接哪个串口、VOFA 发多快）。
+   * 两者存储分开、用途不同，但在这一页用 tab 归到一起 —— 用户想「找模板」时
+   * 不该先记住它存在哪个分类下。
+   */
+  const [tab, setTab] = React.useState<'project' | 'pack'>('project')
+
+  /** 模块包模板 */
+  const [presets, setPresets] = React.useState<PackPreset[]>([])
+
+  /** 格式说明弹窗内容；非 null 时显示 */
+  const [formatDoc, setFormatDoc] = React.useState<string | null>(null)
+
   // ---- 批量 ----
   const [rootDraft, setRootDraft] = React.useState('')
   const [rootList, setRootList] = React.useState<string[]>([])
@@ -81,11 +98,22 @@ export default function TemplatesPage(): React.JSX.Element {
   const [running, setRunning] = React.useState(false)
   const [result, setResult] = React.useState<BatchResult | null>(null)
 
+  /** 重新拉一遍模块包模板 */
+  const refreshPresets = React.useCallback(async (): Promise<void> => {
+    try {
+      const list = await window.api.listPackPresets()
+      setPresets(list)
+    } catch {
+      /* 读失败就当空列表 —— 这一栏不是关键路径 */
+    }
+  }, [])
+
   // 进页面时拉一次模板与工程候选（这两个都不依赖当前工程）
   React.useEffect(() => {
     void refreshTemplates()
     void refreshCandidates()
-  }, [refreshTemplates, refreshCandidates])
+    void refreshPresets()
+  }, [refreshTemplates, refreshCandidates, refreshPresets])
 
   // 工程名变了就重置建议的模板名（用户手动输入的名字不会被覆盖）
   React.useEffect(() => {
@@ -179,7 +207,10 @@ export default function TemplatesPage(): React.JSX.Element {
   const onExport = async (t: ConfigTemplate): Promise<void> => {
     setExportingId(t.id)
     try {
-      const path = await window.api.exportTemplate(t)
+      const path = await window.api.exportTemplate({
+        projectTemplates: [t],
+        defaultName: t.name
+      })
       if (path) notify('ok', `已导出到 ${path}`)
     } catch (err) {
       notify('err', `导出失败：${err instanceof Error ? err.message : String(err)}`)
@@ -189,8 +220,41 @@ export default function TemplatesPage(): React.JSX.Element {
   }
 
   /**
-   * 导入模板：可以一次选多个 .json。
-   * 导入的模板会拿到新 id，不会覆盖本地同名模板 —— 别人给的模板不该顶掉你手里那份。
+   * 全部导出：两类模板写进同一个文件。
+   *
+   * 用户想「把调好的一整套东西备份下来」时不用在两个分类里各点一次。
+   */
+  const onExportAll = async (): Promise<void> => {
+    try {
+      const path = await window.api.exportTemplate({
+        projectTemplates: templates,
+        packPresets: presets,
+        defaultName: 'CV Studio 模板'
+      })
+      if (path) notify('ok', `已导出 ${templates.length + presets.length} 个模板到 ${path}`)
+    } catch (err) {
+      notify('err', `导出失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  /**
+   * 打开模板文件格式说明。
+   *
+   * 这个面板的主要用途是**给 AI 看** —— 用户可以让 AI 照着格式写一个模板，
+   * 所以除了展示，还提供「复制」按钮直接把整段说明塞进剪贴板。
+   */
+  const onShowFormatDoc = async (): Promise<void> => {
+    try {
+      const doc = await window.api.getTemplateFormatDoc()
+      setFormatDoc(doc)
+    } catch (err) {
+      notify('err', `读取格式说明失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  /**
+   * 导入模板：可以一次选多个 .json，每个文件里也可以有多条。
+   * 文件里的模块包模板会自动归到「模块包模板」那栏，不用用户操心。
    */
   const onImport = async (): Promise<void> => {
     setImporting(true)
@@ -198,13 +262,19 @@ export default function TemplatesPage(): React.JSX.Element {
       const res = await window.api.importTemplates()
       if (!res) return // 用户取消
       await refreshTemplates()
-      if (res.failed > 0) {
-        notify(
-          res.imported > 0 ? 'warn' : 'err',
-          `导入完成：成功 ${res.imported} 个，失败 ${res.failed} 个（文件格式不对或不是模板）`
-        )
-      } else if (res.imported > 0) {
-        notify('ok', `已导入 ${res.imported} 个模板`)
+
+      const parts: string[] = []
+      if (res.importedProject > 0) parts.push(`工程配置模板 ${res.importedProject} 个`)
+      if (res.importedPack > 0) parts.push(`模块包模板 ${res.importedPack} 个`)
+
+      if (parts.length > 0) {
+        notify('ok', `已导入：${parts.join('，')}`)
+      }
+      if (res.skipped > 0 || res.missingPacks.length > 0) {
+        const extra: string[] = []
+        if (res.skipped > 0) extra.push(`${res.skipped} 条格式不对已跳过`)
+        if (res.missingPacks.length > 0) extra.push(`缺少模块包：${res.missingPacks.join('、')}`)
+        notify('warn', extra.join('；'))
       }
     } catch (err) {
       notify('err', `导入失败：${err instanceof Error ? err.message : String(err)}`)
@@ -297,33 +367,48 @@ export default function TemplatesPage(): React.JSX.Element {
     )
   }
 
+  const totalCount = templates.length + presets.length
+
   return (
     <>
       <PageHeader
         title="模板"
-        subtitle={`${templates.length} 个模板 · 不需要先选工程也能新建和编辑`}
+        subtitle={`${templates.length} 个工程配置模板 · ${presets.length} 个模块包模板 · 不需要先选工程`}
         actions={
           <>
             <Button
               size="sm"
               variant="ghost"
               disabled={refreshing}
-              onClick={onRefresh}
+              onClick={() => {
+                void onRefresh()
+                void refreshPresets()
+              }}
               title="重新读一遍模板列表"
             >
               {refreshing ? <Spinner /> : <Icons.refresh />}
               刷新
             </Button>
-            {/* 导入：从 .cvtpl.json 读一个或多个模板，不覆盖本地同名模板（会给新 id） */}
             <Button
               size="sm"
               variant="ghost"
               disabled={importing}
               onClick={() => void onImport()}
-              title="从 .json 文件导入模板（可多选）"
+              title="从 .json 导入 —— 一个文件里可以同时有工程配置模板和模块包模板"
             >
               {importing ? <Spinner /> : <Icons.folder />}
               导入
+            </Button>
+            {/* 全部导出：两类模板写进同一个文件，方便整套备份/发给队友 */}
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={totalCount === 0}
+              onClick={() => void onExportAll()}
+              title="把这个文件里所有模板都导出（两类都带上）"
+            >
+              <Icons.write />
+              全部导出
             </Button>
             <Button size="sm" variant="primary" onClick={openNew}>
               <Icons.write />
@@ -334,6 +419,92 @@ export default function TemplatesPage(): React.JSX.Element {
       />
 
       <PageBody>
+        {/* ---- 分类切换 ---- */}
+        <div className="segmented">
+          <button
+            type="button"
+            className={`segmented__item${tab === 'project' ? ' segmented__item--active' : ''}`}
+            onClick={() => setTab('project')}
+          >
+            工程配置模板
+            <span className="segmented__count">{templates.length}</span>
+          </button>
+          <button
+            type="button"
+            className={`segmented__item${tab === 'pack' ? ' segmented__item--active' : ''}`}
+            onClick={() => setTab('pack')}
+          >
+            模块包模板
+            <span className="segmented__count">{presets.length}</span>
+          </button>
+        </div>
+
+        {tab === 'pack' ? (
+          <Card
+            title="模块包模板"
+            hint="每个模块包自己的一套参数，装模块时可以直接套用"
+            actions={
+              <Button size="sm" variant="ghost" onClick={() => void onShowFormatDoc()}>
+                <Icons.info />
+                格式说明
+              </Button>
+            }
+          >
+            {presets.length === 0 ? (
+              <Alert kind="info">
+                还没有模块包模板。到左侧「扩展」里打开一个模块（比如遥控模块 VT13），
+                在页面底部的「存为模板」把当前这套参数存下来，之后就能在这里管理和导出。
+              </Alert>
+            ) : (
+              <div className="list">
+                {presets.map((p) => (
+                  <div key={p.id} className="list__row" style={{ alignItems: 'center' }}>
+                    <div className="grow">
+                      <div className="small">
+                        {p.name}
+                        <span className="faint"> · </span>
+                        <span className="mono faint">{p.packId}</span>
+                      </div>
+                      {p.note && <div className="faint small">{p.note}</div>}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        void window.api
+                          .exportTemplate({
+                            packPresets: [p],
+                            defaultName: p.name
+                          })
+                          .then((path) => {
+                            if (path) notify('ok', `已导出到 ${path}`)
+                          })
+                      }
+                    >
+                      导出
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        void window.api.deletePackPreset(p.id).then((list) => {
+                          setPresets(list)
+                          notify('ok', `已删除模板「${p.name}」`)
+                        })
+                      }}
+                    >
+                      删除
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        ) : null}
+
+        {/* 下面这些是「工程配置模板」的内容 */}
+        {tab === 'project' && (
+          <>
         {/* ---- 从当前工程存一份（需要工程） ---- */}
         <Card
           title="从当前工程存一份"
@@ -608,7 +779,53 @@ export default function TemplatesPage(): React.JSX.Element {
             </div>
           )}
         </Card>
+          </>
+        )}
       </PageBody>
+
+      {/* ---- 格式说明 ---- */}
+      {formatDoc && (
+        <Modal
+          title="模板文件格式"
+          width={820}
+          onClose={() => setFormatDoc(null)}
+          footer={
+            <>
+              <span className="small faint" style={{ marginRight: 'auto' }}>
+                可以直接复制给 AI，让它照着这个格式写模板
+              </span>
+              <Button
+                size="sm"
+                onClick={() => {
+                  void navigator.clipboard
+                    .writeText(formatDoc)
+                    .then(() => notify('ok', '格式说明已复制'))
+                    .catch(() => notify('err', '复制失败，请手动选中文本复制'))
+                }}
+              >
+                复制
+              </Button>
+              <Button size="sm" variant="primary" onClick={() => setFormatDoc(null)}>
+                知道了
+              </Button>
+            </>
+          }
+        >
+          <pre
+            className="mono small"
+            style={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              margin: 0,
+              maxHeight: '60vh',
+              overflow: 'auto',
+              lineHeight: 1.6
+            }}
+          >
+            {formatDoc}
+          </pre>
+        </Modal>
+      )}
 
       {/* ---- 看 JSON ---- */}
       {viewing && (

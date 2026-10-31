@@ -257,31 +257,33 @@ export function PacksPage(): React.JSX.Element {
       />
 
       <PageBody>
-        {/* ---- ① 选模块 ---- */}
-        <Card title="① 选模块" hint="装什么">
-          <div className="row">
-            <div className="grow">
-              <Field label="模块包">
-                <Select
-                  value={packId}
-                  onChange={(e) => setPackId(e.target.value)}
-                  options={packs.map((p) => ({ value: p.id, label: `${p.name}（${p.id}）` }))}
-                />
-              </Field>
-            </div>
-          </div>
-          {pack && <div className="small faint">{pack.summary}</div>}
-          {/* 移植包走独立界面（要调 CubeMX，流程和 vofa 完全不同） */}
-          {isPortPack && (
-            <div className="row" style={{ marginTop: 10 }}>
+        {/* ---- 模块简介 ----
+            以前这里是个「选模块」下拉框，但用户进这一页之前已经在左边导航
+            点过具体哪个模块了，再让他选一次纯属重复。现在只显示当前模块的
+            名字和简介，换模块直接用左侧导航。 */}
+        <Card
+          title={pack?.name ?? '模块包'}
+          hint={pack ? pack.id : undefined}
+          actions={
+            isPortPack ? (
               <Button size="sm" variant="primary" onClick={() => setPortMode(true)}>
                 <Icons.write />
                 进入移植流程
               </Button>
-              <span className="small faint">
-                这个包要改 .ioc、调 CubeMX 重新生成，流程和普通模块包不同
-              </span>
-            </div>
+            ) : null
+          }
+        >
+          {pack ? (
+            <>
+              <div className="small">{pack.summary}</div>
+              {isPortPack && (
+                <div className="small faint" style={{ marginTop: 8 }}>
+                  这个模块要改 .ioc、调 CubeMX 重新生成，流程和普通模块包不同
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="small faint">从左侧「扩展」里选一个模块</div>
           )}
         </Card>
 

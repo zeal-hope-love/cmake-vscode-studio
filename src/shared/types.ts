@@ -808,6 +808,10 @@ export const IPC = {
   templateExport: 'template:export',
   /** 从 .json 文件导入模板（弹打开对话框） */
   templateImport: 'template:import',
+  templateFormatDoc: 'template:formatDoc',
+  packPresetList: 'packPreset:list',
+  packPresetSave: 'packPreset:save',
+  packPresetDelete: 'packPreset:delete',
   historyList: 'history:list',
   historyAdd: 'history:add',
   historyRemove: 'history:remove',
@@ -923,14 +927,37 @@ export interface StudioApi {
   deleteTemplate(id: string): Promise<ConfigTemplate[]>
   /**
    * 导出模板到文件。
-   * 返回保存后的路径；用户取消返回 null。
+   *
+   * 一次可以带两类模板（工程配置 + 模块包），会写进同一个文件。
+   * 返回保存后的路径；用户取消或没东西可导返回 null。
    */
-  exportTemplate(template: ConfigTemplate): Promise<string | null>
+  exportTemplate(payload: {
+    projectTemplates?: ConfigTemplate[]
+    packPresets?: import('./templateFormat').PackPreset[]
+    defaultName?: string
+  }): Promise<string | null>
   /**
-   * 从文件导入模板。
-   * 返回导入后的模板列表 + 成功/失败条数；用户取消返回 null。
+   * 从文件导入模板（可多选文件，每个文件可含多条）。
+   * 按每条记录的 kind 自动分流到对应存储；用户取消返回 null。
    */
-  importTemplates(): Promise<{ imported: number; failed: number; templates: ConfigTemplate[] } | null>
+  importTemplates(): Promise<{
+    imported: number
+    importedProject: number
+    importedPack: number
+    skipped: number
+    /** 文件里引用了但本机没装的模块包 id */
+    missingPacks: string[]
+    templates: ConfigTemplate[]
+    presets: import('./templateFormat').PackPreset[]
+  } | null>
+
+  // ---- 模块包模板 -------------------------------------------------------
+  listPackPresets(packId?: string): Promise<import('./templateFormat').PackPreset[]>
+  savePackPreset(preset: import('./templateFormat').PackPreset): Promise<import('./templateFormat').PackPreset[]>
+  deletePackPreset(id: string): Promise<import('./templateFormat').PackPreset[]>
+  /** 模板文件格式说明（给「复制格式说明」按钮） */
+  getTemplateFormatDoc(): Promise<string>
+
   applyTemplateToProjects(request: BatchRequest): Promise<BatchResult>
 
   listHistory(): Promise<HistoryEntry[]>

@@ -12,6 +12,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { buildTemplateFile, parseTemplateFile, TEMPLATE_FORMAT_DOC } from '../src/shared/templateFormat'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -1844,19 +1845,11 @@ rmSync(sandbox, { recursive: true, force: true })
 
 section('16. 模板导入 / 导出格式')
 
-/** 复刻 ipc.ts 里导入时的解析逻辑 */
-function parseTemplateFile(raw: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    const tpl = (parsed.format === 'cv-studio-template' ? parsed.template : parsed) as
-      | Record<string, unknown>
-      | undefined
-    if (!tpl || typeof tpl !== 'object' || !tpl.target || !tpl.options) return null
-    return tpl
-  } catch {
-    return null
-  }
-}
+/*
+ * 早期这里自己复刻了一份解析逻辑（当时解析写在 ipc.ts 里、依赖 electron 调不动）。
+ * 现在解析已经抽到 `shared/templateFormat.ts`，是纯函数，直接调真的那份 ——
+ * 复刻版留着只会和真实现渐渐分叉，测了半天测的是假货。
+ */
 
 const sampleTpl = {
   id: 'abc',
@@ -1868,23 +1861,27 @@ const sampleTpl = {
   options: { device: 'STM32F407IGH6' }
 }
 
+/** 便捷包装：解析出第一个工程配置模板，没有就 null */
+function parseFirstProject(raw: string): { name?: string } | null {
+  const p = parseTemplateFile(raw)
+  return p.projectTemplates[0] ?? null
+}
+
 check(
   '模板导入：认带 format 包装的文件',
-  (() => {
-    const wrapped = JSON.stringify({ format: 'cv-studio-template', version: 1, template: sampleTpl })
-    const t = parseTemplateFile(wrapped)
-    return t !== null && t.name === '测试模板'
-  })()
+  parseFirstProject(
+    JSON.stringify({ format: 'cv-studio-template', version: 1, template: sampleTpl })
+  )?.name === '测试模板'
 )
 check(
   '模板导入：也认裸模板（兼容手写文件）',
-  (() => {
-    const t = parseTemplateFile(JSON.stringify(sampleTpl))
-    return t !== null && t.name === '测试模板'
-  })()
+  parseFirstProject(JSON.stringify(sampleTpl))?.name === '测试模板'
 )
-check('模板导入：缺 target 的文件被拒绝', parseTemplateFile(JSON.stringify({ name: 'x' })) === null)
-check('模板导入：非 JSON 被拒绝', parseTemplateFile('not json at all') === null)
+check(
+  '模板导入：缺 target 的文件被拒绝',
+  parseFirstProject(JSON.stringify({ name: 'x' })) === null
+)
+check('模板导入：非 JSON 被拒绝', parseFirstProject('not json at all') === null)
 check(
   '模板导入：空 options 也能进（老模板可能没填参数）',
   (() => {
@@ -1894,6 +1891,116 @@ check(
 )
 
 // ==========================================================================
+// ==========================================================================
+// 17. 模板文件格式（统一格式 · 多模板混装 · 向后兼容）
+//
+// 真实场景：用户把「一整套调好的东西」导成一个文件发给队友 ——
+// 里面既有工程配置模板，也有模块包参数。导入时要按 kind 自动分流。
+// ==========================================================================
+
+{
+section('17. 模板文件格式')
+
+const sampleProject = {
+  name: '标准步兵',
+  note: 'F407',
+  target: { editor: 'vscode', buildSystem: 'cmake', probe: 'cmsis-dap' },
+  options: { device: 'STM32F407IGH6' },
+  files: { launch: '{}' }
+}
+const samplePreset = {
+  packId: 'remote-vt13',
+  name: '标准步兵-VT13',
+  note: 'USART1',
+  params: { usart: 'USART1', demoMode: false }
+}
+
+// ---- 新格式：混装 ----
+{
+  const file = buildTemplateFile(
+    [sampleProject as never],
+    [samplePreset as never]
+  )
+  const raw = JSON.stringify(file)
+  const tplParsed = parseTemplateFile(raw)
+
+  check('模板文件: 新格式识别为 v1', tplParsed.format === 'v1', tplParsed.format)
+  check('模板文件: 工程配置模板解析出 1 条', tplParsed.projectTemplates.length === 1)
+  check('模板文件: 模块包模板解析出 1 条', tplParsed.packPresets.length === 1)
+  check('模板文件: 没有跳过任何条目', tplParsed.skipped === 0)
+  check(
+    '模板文件: 工程模板名字正确',
+    tplParsed.projectTemplates[0]?.name === '标准步兵',
+    tplParsed.projectTemplates[0]?.name
+  )
+  check(
+    '模板文件: 模块包模板 packId 正确',
+    tplParsed.packPresets[0]?.packId === 'remote-vt13',
+    tplParsed.packPresets[0]?.packId
+  )
+  check(
+    '模板文件: params 完整保留',
+    tplParsed.packPresets[0]?.params['usart'] === 'USART1'
+  )
+  check(
+    '模板文件: 导入时清了 id（会生成新的，不覆盖本地）',
+    tplParsed.projectTemplates[0]?.id === '' && tplParsed.packPresets[0]?.id === ''
+  )
+}
+
+// ---- 旧格式兼容 ----
+{
+  const legacy = JSON.stringify({
+    format: 'cv-studio-template',
+    version: 1,
+    template: sampleProject
+  })
+  const tplParsed = parseTemplateFile(legacy)
+  check('模板文件: 旧单模板格式仍能导入', tplParsed.format === 'legacy', tplParsed.format)
+  check('模板文件: 旧格式解析出 1 条', tplParsed.projectTemplates.length === 1)
+}
+
+// ---- 裸对象 ----
+{
+  const bareProject = parseTemplateFile(JSON.stringify(sampleProject))
+  check('模板文件: 裸工程模板对象能识别', bareProject.projectTemplates.length === 1)
+
+  const barePreset = parseTemplateFile(JSON.stringify(samplePreset))
+  check('模板文件: 裸模块包模板对象能识别', barePreset.packPresets.length === 1)
+}
+
+// ---- 坏输入 ----
+{
+  check('模板文件: 非 JSON 返回空', parseTemplateFile('not json').projectTemplates.length === 0)
+  check('模板文件: 空数组返回空', parseTemplateFile('[]').skipped === 1)
+
+  // 混进一条坏的，好的照样能进
+  const mixed = JSON.stringify({
+    format: 'cv-studio-templates',
+    version: 1,
+    entries: [
+      { kind: 'project', template: sampleProject },
+      { kind: 'pack', preset: { name: '缺 packId', params: {} } }, // 坏
+      { kind: 'unknown-kind' }, // 坏
+      { kind: 'pack', preset: samplePreset }
+    ]
+  })
+  const tplParsed = parseTemplateFile(mixed)
+  check('模板文件: 坏条目只跳过自己，不连累其它', tplParsed.projectTemplates.length === 1 && tplParsed.packPresets.length === 1)
+  check('模板文件: 跳过数统计正确', tplParsed.skipped === 2, `实际 ${tplParsed.skipped}`)
+}
+
+// ---- 格式说明 ----
+{
+  check('格式说明: 包含 format 字段名', TEMPLATE_FORMAT_DOC.includes('cv-studio-templates'))
+  check('格式说明: 说明 kind 两种取值', TEMPLATE_FORMAT_DOC.includes('"project"') && TEMPLATE_FORMAT_DOC.includes('"pack"'))
+  check('格式说明: 有示例代码块', TEMPLATE_FORMAT_DOC.includes('```') || TEMPLATE_FORMAT_DOC.includes('{\n'))
+  check('格式说明: 提到 packId 必须已安装', TEMPLATE_FORMAT_DOC.includes('packId'))
+}
+} // end 17
+
+// ==========================================================================
+
 section('结果')
 console.log(`  共 ${checks} 项检查，失败 ${failures} 项`)
 if (failures > 0) {

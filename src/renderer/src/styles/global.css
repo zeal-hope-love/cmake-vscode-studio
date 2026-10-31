@@ -1557,3 +1557,54 @@ html[data-theme='light'] .log {
 .pane-handle--active .pane-handle__bar {
   background: var(--accent);
 }
+
+/* ---------------------------------------------------------------------------
+   分段切换（模板页的「工程配置 / 模块包」）
+
+   用下划线而不是按钮：这两个是「看哪一类」的视角切换，不是动作。
+   做得像按钮会让人以为是「点一下执行」。
+   --------------------------------------------------------------------------- */
+.segmented {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+
+.segmented__item {
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg-faint);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
+}
+
+.segmented__item:hover {
+  color: var(--fg);
+}
+
+.segmented__item--active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+
+.segmented__count {
+  font-size: 11px;
+  color: var(--fg-faint);
+  background: var(--bg-sunken);
+  border-radius: 8px;
+  padding: 0 6px;
+  line-height: 16px;
+  min-width: 16px;
+  text-align: center;
+}
