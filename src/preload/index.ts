@@ -42,7 +42,13 @@ import {
   type WriteRequest,
   type WriteResult
 } from '@shared/types'
-import type { PackApplyResult, PackManifest, PackPlan } from '@shared/packTypes'
+import type {
+  PackApplyResult,
+  PackManifest,
+  PackPlan,
+  PackPortPreflightResult,
+  PackPortResult
+} from '@shared/packTypes'
 
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
   const listener = (_event: unknown, payload: T): void => cb(payload)
@@ -109,6 +115,10 @@ const api: StudioApi = {
     ipcRenderer.invoke(IPC.packPlan, options) as Promise<PackPlan>,
   packApply: (options: PackPlanOptions) =>
     ipcRenderer.invoke(IPC.packApply, options) as Promise<PackApplyResult>,
+  packPortPreflight: (packId: string, projectRoot: string) =>
+    ipcRenderer.invoke(IPC.packPortPreflight, packId, projectRoot) as Promise<PackPortPreflightResult>,
+  packPortInstall: (options: { packId: string; projectRoot: string; skipCubeMx?: boolean }) =>
+    ipcRenderer.invoke(IPC.packPortInstall, options) as Promise<PackPortResult>,
 
   cmakeTrashFiles: (projectRoot, relPaths) =>
     ipcRenderer.invoke(IPC.cmakeTrashFiles, projectRoot, relPaths) as Promise<{

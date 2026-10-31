@@ -29,6 +29,8 @@ import {
   Select,
   TextInput
 } from '../components/ui'
+import { Icons } from '../components/icons'
+import { PortPackPanel } from '../components/PortPackPanel'
 import { useStudio } from '../state/store'
 import type {
   ChannelBinding,
@@ -87,6 +89,16 @@ export function PacksPage(): React.JSX.Element {
   const [applyErrors, setApplyErrors] = React.useState<string[]>([])
 
   const pack = packs.find((p) => p.id === packId) ?? null
+
+  /**
+   * 移植包（带 `iocChanges` 的，比如 VT13）走另一套界面。
+   *
+   * 为什么不共用 vofa 那套：vofa 是「算 diff → 逐文件确认 → 写」，
+   * 因为改动全是工具生成的文本；移植包要调 CubeMX 这个外部程序，
+   * 改哪些文件事先算不出来，所以交互改成「预检 → 跑流水线 → 看验收」。
+   */
+  const isPortPack = Boolean(pack && (pack.iocChanges || pack.stateMachine))
+  const [portMode, setPortMode] = React.useState(false)
 
   // ---- 装载包列表（store 里已有就直接用）----
   React.useEffect(() => {
@@ -220,6 +232,13 @@ export function PacksPage(): React.JSX.Element {
 
   const errCount = inspect?.report.checks.filter((c) => c.level === 'err').length ?? 0
 
+  // 移植包：整页交给 PortPackPanel
+  if (pack && isPortPack && portMode) {
+    return (
+      <PortPackPanel pack={pack} projectRoot={projectRoot} onBack={() => setPortMode(false)} />
+    )
+  }
+
   return (
     <>
       <PageHeader
@@ -252,6 +271,18 @@ export function PacksPage(): React.JSX.Element {
             </div>
           </div>
           {pack && <div className="small faint">{pack.summary}</div>}
+          {/* 移植包走独立界面（要调 CubeMX，流程和 vofa 完全不同） */}
+          {isPortPack && (
+            <div className="row" style={{ marginTop: 10 }}>
+              <Button size="sm" variant="primary" onClick={() => setPortMode(true)}>
+                <Icons.write />
+                进入移植流程
+              </Button>
+              <span className="small faint">
+                这个包要改 .ioc、调 CubeMX 重新生成，流程和普通模块包不同
+              </span>
+            </div>
+          )}
         </Card>
 
         {/* ---- ② 兼容性 ---- */}

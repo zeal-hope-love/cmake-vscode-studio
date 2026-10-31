@@ -8,6 +8,8 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { applyPackInstall, planPackInstall } from './services/packInstaller'
+import { runPortInstall } from './services/packPortInstaller'
+import { preflight } from './services/vt13/portRunner'
 import {
   checkPackCompat,
   inspectProject,
@@ -48,7 +50,13 @@ import {
   type WriteRequest,
   type WriteResult
 } from '@shared/types'
-import type { PackApplyResult, PackManifest, PackPlan } from '@shared/packTypes'
+import type {
+  PackApplyResult,
+  PackManifest,
+  PackPlan,
+  PackPortPreflightResult,
+  PackPortResult
+} from '@shared/packTypes'
 import type { PackInspectResult, PackPlanOptions, RenamePlan } from '@shared/types'
 import { defaultGenOptions, generateBundle } from './services/generators'
 import { adaptTemplateOptions } from '@shared/templateAdapt'
@@ -478,6 +486,53 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     }
     return applyPackInstall(plan)
   })
+
+  // ---- 移植包（VT13 这类）------------------------------------------------
+  //
+  // 和上面的 packPlan/packApply 是两条路：移植包要调 CubeMX 这种外部程序，
+  // 改的文件数没法事先确定，所以不能像常规包那样「先算 diff 再确认」。
+  // 保底手段是「动手前存快照」，出问题用「历史与恢复」整体还原。
+
+  ipcMain.handle(
+    IPC.packPortPreflight,
+    async (_e, packId: string, projectRoot: string): Promise<PackPortPreflightResult> => {
+      const pack = listPacks().find((p) => p.id === packId)
+      if (!pack) {
+        return {
+          ok: false,
+          items: [{ label: '模块包', level: 'err', detail: `找不到模块包 ${packId}` }],
+          iocPath: null
+        }
+      }
+      return preflight(projectRoot, pack)
+    }
+  )
+
+  ipcMain.handle(
+    IPC.packPortInstall,
+    async (
+      _e,
+      options: { packId: string; projectRoot: string; skipCubeMx?: boolean }
+    ): Promise<PackPortResult> => {
+      const pack = listPacks().find((p) => p.id === options.packId)
+      if (!pack) {
+        return {
+          ok: false,
+          preflight: { ok: false, items: [], iocPath: null },
+          steps: [],
+          acceptance: [],
+          snapshotId: null,
+          errors: [`找不到模块包 ${options.packId}`],
+          warnings: []
+        }
+      }
+      return runPortInstall({
+        root: options.projectRoot,
+        pack,
+        skipCubeMx: options.skipCubeMx
+      })
+    }
+  )
 
   // ---- 模板 -------------------------------------------------------------
   ipcMain.handle(IPC.templateList, async () => listTemplates())

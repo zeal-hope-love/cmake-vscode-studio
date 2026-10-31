@@ -99,16 +99,32 @@ export function readStoreFile<T>(filePath: string, fallback: T): T {
  * dev 模式下主进程、渲染进程、以及 Electron 自己的 GPU/utility 子进程会并发
  * 碰 `settings.json`。撞上时原来是一次就抛，用户看到
  *   Error invoking remote method 'window:setTheme': EPERM: operation not permitted
- * 完全不知道该干什么。现在退避重试 5 次（20→40→80→160ms，约 0.3s），
- * 绝大多数瞬时冲突都能过去；真过不去才抛，并把路径和原因写进错误信息。
+ * 完全不知道该干什么。
+ *
+ * ## 重试参数是怎么定的
+ *
+ * 一开始是 5 次、20→40→80→160ms（总共约 0.3s），**实测不够** ——
+ * Electron 启动瞬间几个子进程一起碰这个文件，冲突窗口能到 1 秒以上。
+ * 实测复现：打包版一启动就报 EPERM，但事后单独检查文件完全可写。
+ *
+ * 现在改成 8 次、最长 200ms 间隔，总共约 1.1 秒。
+ *
+ * 为什么敢等这么久：这个函数只在「改设置」时调用（切主题、改工具路径），
+ * 不是热路径。用户点一下等 1 秒可以接受，弹一个看不懂的 EPERM 不可接受。
+ *
+ * 为什么用忙等而不是 await：函数是同步签名，调用方遍布各处，
+ * 改成 async 要传染一整套调用链。这里等的是文件句柄释放，
+ * 忙等 1 秒对主进程的影响可以忽略（本来也在等 IO）。
  */
 export function writeStoreFile(filePath: string, value: unknown): void {
   mkdirSync(dirname(filePath), { recursive: true })
   const text = JSON.stringify(value, null, 2)
 
-  const attempts = 5
+  /** 退避间隔（毫秒）：10,20,40,80,160,200,200,200 —— 合计约 0.9s */
+  const backoff = [10, 20, 40, 80, 160, 200, 200, 200]
   let lastErr: unknown = null
-  for (let i = 0; i < attempts; i++) {
+
+  for (let i = 0; i <= backoff.length; i++) {
     try {
       writeFileSync(filePath, text, 'utf8')
       return
@@ -117,10 +133,10 @@ export function writeStoreFile(filePath: string, value: unknown): void {
       const code = (err as NodeJS.ErrnoException).code
       // 只有「文件被占用 / 没权限」这类才值得重试；其它错误立刻抛
       if (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') throw err
-      // 退避：20ms → 40 → 80 → 160，总耗时约 0.3s，用户感知不到
-      const until = Date.now() + 20 * 2 ** i
+      if (i >= backoff.length) break
+      const until = Date.now() + backoff[i]
       while (Date.now() < until) {
-        /* 忙等：这里在主进程同步路径上，用 Atomics.wait 反而更绕 */
+        /* 见上面的说明：同步签名下只能忙等 */
       }
     }
   }

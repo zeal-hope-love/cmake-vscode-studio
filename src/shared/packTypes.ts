@@ -279,3 +279,44 @@ export interface PackApplyResult {
   errors: string[]
   snapshotId: string | null
 }
+
+// --------------------------------------------------------------------------
+// 移植包（VT13 这类需要调外部程序的包）
+// --------------------------------------------------------------------------
+
+export interface PackPortPreflightItem {
+  label: string
+  level: 'ok' | 'warn' | 'err'
+  detail: string
+}
+
+export interface PackPortPreflightResult {
+  ok: boolean
+  items: PackPortPreflightItem[]
+  /** 找到的 .ioc 绝对路径 */
+  iocPath: string | null
+}
+
+export interface PackPortStep {
+  id: string
+  label: string
+  status: 'running' | 'ok' | 'warn' | 'err' | 'skip'
+  detail?: string
+}
+
+export interface PackPortAcceptanceItem {
+  id: string
+  label: string
+  ok: boolean
+  detail: string
+}
+
+export interface PackPortResult {
+  ok: boolean
+  preflight: PackPortPreflightResult
+  steps: PackPortStep[]
+  acceptance: PackPortAcceptanceItem[]
+  snapshotId: string | null
+  errors: string[]
+  warnings: string[]
+}

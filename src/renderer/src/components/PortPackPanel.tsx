@@ -1,0 +1,299 @@
+/**
+ * 移植包面板（VT13 这类）。
+ *
+ * ## 为什么和 vofa 那套分开
+ *
+ * 常规模块包（vofa）的流程是「算 diff → 用户逐文件确认 → 落盘」，因为改动
+ * 都是工具自己生成的文本。移植包不一样：它要**调 CubeMX 这个外部程序**，
+ * CubeMX 会重写 `Src/`、`Inc/`，改哪些文件事先算不出来。
+ *
+ * 所以这里的交互是「预检 → 跑流水线 → 看结果」，保底手段是快照，
+ * 而不是事先确认 diff。
+ */
+
+import React from 'react'
+import { Button, Card, Field, PageBody, PageHeader, Spinner } from '../components/ui'
+import { Icons } from '../components/icons'
+import { useStudio } from '../state/store'
+import type {
+  PackManifest,
+  PackPortAcceptanceItem,
+  PackPortPreflightResult,
+  PackPortResult,
+  PackPortStep
+} from '@shared/packTypes'
+
+interface Props {
+  pack: PackManifest
+  projectRoot: string
+  onBack: () => void
+}
+
+const STEP_STYLE: Record<
+  PackPortStep['status'],
+  { mark: string; color: string }
+> = {
+  running: { mark: '…', color: 'var(--fg-faint)' },
+  ok: { mark: '✓', color: 'var(--ok)' },
+  warn: { mark: '!', color: 'var(--warn)' },
+  err: { mark: '✗', color: 'var(--err)' },
+  skip: { mark: '–', color: 'var(--fg-faint)' }
+}
+
+export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.Element {
+  const notify = useStudio((s) => s.notify)
+
+  const [preflight, setPreflight] = React.useState<PackPortPreflightResult | null>(null)
+  const [checking, setChecking] = React.useState(false)
+  const [running, setRunning] = React.useState(false)
+  const [result, setResult] = React.useState<PackPortResult | null>(null)
+  const [skipCubeMx, setSkipCubeMx] = React.useState(false)
+  /** 跑的过程中实时追加的步骤 */
+  const [liveSteps, setLiveSteps] = React.useState<PackPortStep[]>([])
+
+  /** 进页面先做一次预检（只读） */
+  const doPreflight = React.useCallback(async (): Promise<void> => {
+    setChecking(true)
+    try {
+      const r = await window.api.packPortPreflight(pack.id, projectRoot)
+      setPreflight(r)
+    } catch (err) {
+      notify('err', `预检失败：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setChecking(false)
+    }
+  }, [pack.id, projectRoot, notify])
+
+  React.useEffect(() => {
+    void doPreflight()
+  }, [doPreflight])
+
+  const run = async (): Promise<void> => {
+    setRunning(true)
+    setResult(null)
+    setLiveSteps([])
+    try {
+      // 主进程一次性跑完整个流水线，中途没法回调进度
+      // （IPC invoke 是单次往返）。所以这里先显示「正在执行」。
+      const r = await window.api.packPortInstall({
+        packId: pack.id,
+        projectRoot,
+        skipCubeMx
+      })
+      setResult(r)
+      if (r.ok) {
+        notify('ok', `移植完成，${r.acceptance.filter((a) => a.ok).length} 项验收通过`)
+      } else {
+        notify('err', `移植未完成：${r.errors[0] ?? '未知原因'}`)
+      }
+      // 重新预检，反映新状态
+      void doPreflight()
+    } catch (err) {
+      notify('err', `执行失败：${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const blocked = preflight ? !preflight.ok : false
+  const steps = result?.steps ?? liveSteps
+
+  return (
+    <>
+      <PageHeader
+        title={pack.name}
+        subtitle={pack.summary}
+        actions={
+          <>
+            <Button size="sm" variant="ghost" onClick={onBack}>
+              换一个模块
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={checking || running}
+              onClick={() => void doPreflight()}
+            >
+              {checking ? <Spinner /> : <Icons.refresh />}
+              重新预检
+            </Button>
+            <Button size="sm" variant="primary" disabled={blocked || running} onClick={() => void run()}>
+              {running ? <Spinner /> : <Icons.write />}
+              {running ? '正在移植…' : '开始移植'}
+            </Button>
+          </>
+        }
+      />
+
+      <PageBody>
+        {/* ---- ① 预检 ---- */}
+        <Card title="① 预检" hint="只读，还没动任何文件">
+          {!preflight ? (
+            <div className="small faint">{checking ? '正在检查…' : '（没有结果）'}</div>
+          ) : (
+            <div className="list">
+              {preflight.items.map((it, i) => {
+                const s =
+                  it.level === 'err'
+                    ? { mark: '✗', color: 'var(--err)' }
+                    : it.level === 'warn'
+                      ? { mark: '!', color: 'var(--warn)' }
+                      : { mark: '✓', color: 'var(--ok)' }
+                return (
+                  <div key={i} className="list__row" style={{ alignItems: 'flex-start' }}>
+                    <span
+                      className="mono"
+                      style={{ width: 16, textAlign: 'center', flex: '0 0 auto', color: s.color }}
+                    >
+                      {s.mark}
+                    </span>
+                    <div className="grow">
+                      <div className="small">{it.label}</div>
+                      <div className="faint small">{it.detail}</div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </Card>
+
+        {/* ---- ② 选项 ---- */}
+        <Card title="② 执行选项" hint="一般不用改">
+          <Field label="演示模式（跳过 CubeMX）">
+            <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={skipCubeMx}
+                disabled={running}
+                onChange={(e) => setSkipCubeMx(e.target.checked)}
+              />
+              <span className="small faint">
+                只做代码改造，不调 CubeMX 重新生成。用于已手动配好外设、或没装 CubeMX 的机器。
+              </span>
+            </label>
+          </Field>
+          <div className="small faint" style={{ marginTop: 8 }}>
+            <strong>动文件之前会自动存快照</strong>，出问题可在「系统 → 历史与恢复」里整体还原。
+          </div>
+        </Card>
+
+        {/* ---- ③ 执行过程 ---- */}
+        {(running || steps.length > 0) && (
+          <Card
+            title="③ 执行过程"
+            hint={running ? '正在跑，CubeMX 那一步约 40 秒' : '已完成'}
+          >
+            <div className="list">
+              {steps.map((s, i) => {
+                const st = STEP_STYLE[s.status]
+                return (
+                  <div key={`${s.id}-${i}`} className="list__row" style={{ alignItems: 'flex-start' }}>
+                    <span
+                      className="mono"
+                      style={{ width: 16, textAlign: 'center', flex: '0 0 auto', color: st.color }}
+                    >
+                      {st.mark}
+                    </span>
+                    <div className="grow">
+                      <div className="small">{s.label}</div>
+                      {s.detail && (
+                        <div className="faint small" style={{ whiteSpace: 'pre-wrap' }}>
+                          {s.detail}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+              {running && (
+                <div className="list__row">
+                  <span className="mono" style={{ width: 16, textAlign: 'center' }}>
+                    <Spinner />
+                  </span>
+                  <div className="grow small faint">执行中…</div>
+                </div>
+              )}
+            </div>
+          </Card>
+        )}
+
+        {/* ---- ④ 验收 ---- */}
+        {result && result.acceptance.length > 0 && (
+          <Card
+            title="④ 验收"
+            hint={`${result.acceptance.filter((a) => a.ok).length}/${result.acceptance.length} 项通过`}
+          >
+            <div className="list">
+              {result.acceptance.map((a: PackPortAcceptanceItem) => (
+                <div key={a.id} className="list__row" style={{ alignItems: 'flex-start' }}>
+                  <span
+                    className="mono"
+                    style={{
+                      width: 16,
+                      textAlign: 'center',
+                      flex: '0 0 auto',
+                      color: a.ok ? 'var(--ok)' : 'var(--err)'
+                    }}
+                  >
+                    {a.ok ? '✓' : '✗'}
+                  </span>
+                  <div className="grow">
+                    <div className="small">{a.label}</div>
+                    <div className="faint small">{a.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+
+        {/* ---- ⑤ 问题 ---- */}
+        {result && (result.errors.length > 0 || result.warnings.length > 0) && (
+          <Card title="⑤ 需要处理">
+            {result.errors.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div className="small" style={{ color: 'var(--err)' }}>
+                  错误
+                </div>
+                {result.errors.map((e, i) => (
+                  <div key={i} className="small faint">
+                    · {e}
+                  </div>
+                ))}
+              </div>
+            )}
+            {result.warnings.length > 0 && (
+              <div>
+                <div className="small" style={{ color: 'var(--warn)' }}>
+                  提醒
+                </div>
+                {result.warnings.map((w, i) => (
+                  <div key={i} className="small faint">
+                    · {w}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        )}
+
+        {/* ---- ⑥ 说明 ---- */}
+        {pack.manualSteps.length > 0 && (
+          <Card title="⑥ 还要你手动做的" hint="工具做不到的部分">
+            <div className="list">
+              {pack.manualSteps.map((s, i) => (
+                <div key={i} className="list__row" style={{ alignItems: 'flex-start' }}>
+                  <span className="mono faint" style={{ width: 16, flex: '0 0 auto' }}>
+                    {i + 1}
+                  </span>
+                  <div className="grow small">{s}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        )}
+      </PageBody>
+    </>
+  )
+}

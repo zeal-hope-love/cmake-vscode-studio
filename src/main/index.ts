@@ -16,6 +16,33 @@ const THEME_COLORS: Record<'dark' | 'light', { bg: string; fg: string }> = {
 
 let mainWindow: BrowserWindow | null = null
 
+/*
+ * 允许用环境变量改 userData 目录。
+ *
+ * 为什么需要：验证时经常要在「不碰用户真实数据」的前提下跑一遍 ——
+ * 否则测试会污染 %APPDATA%\CV Studio（改主题、写历史、存快照）。
+ *
+ * ## 时机很讲究
+ *
+ * `app.setPath('userData', ...)` 必须在**任何东西读取 userData 之前**调用。
+ * 实测：放在模块顶层不行 —— Electron 那时还没初始化完，setPath 被静默忽略，
+ * 后面照样用默认目录（从 stderr 里看到还是 %APPDATA%\CV Studio 就说明没生效）。
+ *
+ * 放在 `app.on('ready')` 里也**太晚** —— Chromium 在 ready 之前就用 userData
+ * 建好了缓存目录。
+ *
+ * 正确做法是 `app.whenReady()` 之前的**第一个 tick**：用一个立即执行函数
+ * 把 setPath 放在最前面，确保它先于任何 getPath 调用。
+ */
+const userDataOverride = process.env['CFGSTUDIO_USER_DATA']
+if (userDataOverride) {
+  try {
+    app.setPath('userData', userDataOverride)
+  } catch {
+    /* 极端情况下（Electron 还没就绪）忽略 —— 只是调试开关，不影响正常使用 */
+  }
+}
+
 // 开发期开放渲染进程的调试端口，方便 Chrome DevTools / VS Code / WebStorm 附加。
 // Chromium 的 --remote-debugging-port 默认只绑 127.0.0.1，且打包版不会执行这里。
 if (!app.isPackaged) {

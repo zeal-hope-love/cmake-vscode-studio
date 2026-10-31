@@ -798,6 +798,8 @@ export const IPC = {
   packInspect: 'pack:inspect',
   packPlan: 'pack:plan',
   packApply: 'pack:apply',
+  packPortPreflight: 'pack:portPreflight',
+  packPortInstall: 'pack:portInstall',
 
   templateList: 'template:list',
   templateSave: 'template:save',
@@ -897,6 +899,17 @@ export interface StudioApi {
   packPlan(options: PackPlanOptions): Promise<import('./packTypes').PackPlan>
   /** 落盘（先存快照）+ 记历史 */
   packApply(options: PackPlanOptions): Promise<import('./packTypes').PackApplyResult>
+
+  // ---- 移植包（VT13 这类）----
+  //
+  // 和上面的 packApply 是两条不同的路：
+  //   · packPlan/packApply —— 常规包，先算出每个文件的改前改后，用户看 diff 再确认
+  //   · packPortInstall    —— 移植包，要调外部程序（CubeMX）改一堆文件，
+  //                           没法事先算出完整 diff，靠「快照 + 回滚」保底
+  /** 移植前预检，只读 */
+  packPortPreflight(packId: string, projectRoot: string): Promise<import('./packTypes').PackPortPreflightResult>
+  /** 执行移植流水线（先存快照） */
+  packPortInstall(options: { packId: string; projectRoot: string; skipCubeMx?: boolean }): Promise<import('./packTypes').PackPortResult>
 
   /** 新建一个源码文件（骨架），不自动加入构建 */
   cmakeCreateFile(
