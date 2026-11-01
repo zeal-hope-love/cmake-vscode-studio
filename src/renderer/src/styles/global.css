@@ -424,18 +424,31 @@ textarea {
   padding: 16px 18px 28px;
   min-height: 0;
   /*
-   * 必须是纵向布局。
+   * 必须是纵向布局 —— 但不写 flex 更好。
    *
-   * 不写 flex-direction 就是默认的 row —— 页面里每个直接子元素都成了
-   * 「并排的 flex 项」，宽度按内容算。`.workflow` 这种内容较宽的元素
-   * 会把容器撑开，里面所有的 `flex-wrap` 都失效，文字挤在一起
-   * （用户反复截图反馈的「CMSIS-DAP」压字就是这个）。
+   * 背景：不写 flex-direction 时默认是 row，页面里每个直接子元素
+   * 都成了「并排的 flex 项」，宽度按内容算，于是 `.workflow` 这种
+   * 内容宽的元素把容器撑开、内层 flex-wrap 全失效（CMSIS-DAP 压字）。
    *
-   * 页面本来就是纵向堆叠的，显式声明 column。
+   * 但改成 `display: flex; flex-direction: column` 又引出新问题：
+   * 纵向 flex 里所有子元素默认 `flex-shrink` 为 1，卡片会被**平分高度
+   * 压扁**成一小条（用户截图里每张卡只剩标题栏就是这个）。
+   *
+   * 正确做法：保持普通块级容器（卡片自然占满宽度、按内容撑高），
+   * 靠 `.main__content > *` 保证子元素宽度拉满即可。
    */
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  display: block;
+}
+
+/*
+ * 页面里的直接子元素：占满宽度、不许被压缩。
+ *
+ * `.workflow` 内部有 flex-wrap，需要「父级宽度确定」才能正确折行 ——
+ * 块级容器天然满足这一点（宽度 = 父级内容宽度）。
+ */
+.main__content > * {
+  width: 100%;
+  box-sizing: border-box;
 }
 
 /*
