@@ -242,23 +242,16 @@ export default function ProjectPage(): React.JSX.Element {
                                 <div className="faint small">{c.detail}</div>
                               </span>
                               {/*
-                                芯片型号徽标。名字可能很长（STM32F407IGH6），
-                                给它 maxWidth 和省略号 —— 不加的话它会顶破
-                                卡片右边界（截图里的现象）。
-                                完整型号放 title 里，鼠标悬停能看到。
+                                芯片型号徽标。
+                                `STM32F407IGH6` 这种型号有 13 个字符，早先给的
+                                maxWidth:160 装不下，被截成了「F4C…」——
+                                截断比不显示还糟糕，纯粹是噪音。
+                                现在放宽到 200px（实测 13 字符约 110px，留足余量），
+                                并且**不截断**：宁可让左边的路径先用省略号，
+                                也要保证型号完整可读。
                               */}
                               {c.chip && (
-                                <span
-                                  style={{
-                                    flex: '0 1 auto',
-                                    minWidth: 0,
-                                    maxWidth: 160,
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap'
-                                  }}
-                                  title={c.chip}
-                                >
+                                <span style={{ flex: '0 0 auto' }} title={c.chip}>
                                   <Badge kind="accent">{c.chip}</Badge>
                                 </span>
                               )}
@@ -525,9 +518,12 @@ export default function ProjectPage(): React.JSX.Element {
             <Card title=".vscode 现状" hint="本工具会写这 4 个文件（外加 openocd-*.cfg）" flush>
               <DataTable
                 columns={[
-                  { key: 'file', title: '文件' },
-                  { key: 'path', title: '路径' },
-                  { key: 'status', title: '状态' }
+                  { key: 'file', title: '文件', width: '28%' },
+                  { key: 'path', title: '路径', width: '52%' },
+                  // 状态列必须给足宽度 —— 不给的话表格自动分配，
+                  // 短内容（徽标）被压到最窄，长内容（路径）反而占满，
+                  // 于是「存在，含 1 组 IntelliSense 配置」被截掉一半。
+                  { key: 'status', title: '状态', width: '20%' }
                 ]}
                 rows={Object.values(project.vscodeFiles).map((f) => ({
                   key: f.name,
@@ -537,15 +533,21 @@ export default function ProjectPage(): React.JSX.Element {
                     </span>,
                     <PathText key="p" value={f.path} max={64} />,
                     f.valid === false ? (
-                      <Badge key="s" kind="err">
-                        {f.note}
-                      </Badge>
+                      <span title={f.note} style={{ flexShrink: 0 }}>
+                        <Badge key="s" kind="err">
+                          格式有问题
+                        </Badge>
+                      </span>
                     ) : f.exists ? (
-                      <Badge key="s" kind="ok">
-                        {f.note}
-                      </Badge>
+                      <span title={f.note} style={{ flexShrink: 0 }}>
+                        <Badge key="s" kind="ok">
+                          存在
+                        </Badge>
+                      </span>
                     ) : (
-                      <Badge key="s">不存在，将新建</Badge>
+                      <span style={{ flexShrink: 0 }}>
+                        <Badge key="s">将新建</Badge>
+                      </span>
                     )
                   ]
                 }))}

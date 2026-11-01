@@ -423,6 +423,19 @@ textarea {
   overflow-y: auto;
   padding: 16px 18px 28px;
   min-height: 0;
+  /*
+   * 必须是纵向布局。
+   *
+   * 不写 flex-direction 就是默认的 row —— 页面里每个直接子元素都成了
+   * 「并排的 flex 项」，宽度按内容算。`.workflow` 这种内容较宽的元素
+   * 会把容器撑开，里面所有的 `flex-wrap` 都失效，文字挤在一起
+   * （用户反复截图反馈的「CMSIS-DAP」压字就是这个）。
+   *
+   * 页面本来就是纵向堆叠的，显式声明 column。
+   */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
 }
 
 /*
@@ -1698,41 +1711,42 @@ html[data-theme='light'] .log {
 }
 
 /* ---------------------------------------------------------------------------
-   状态徽标：圆底 + 符号
+   状态标记
    
-   原来是一串裸符号挤在文字左边，行与行之间也没有间隔，看着像一段乱码。
-   改成圆形底 + 对比色符号，一眼能扫出哪几条是警告。
+   早先为了「让符号好看点」给 .badge 加了圆底（border-radius: 50%），
+   结果**把整个 .badge 类改掉了** —— 这个类本来是各处通用的圆角标签
+   （探针名、芯片型号都是它），于是所有标签全变成了圆圈，
+   用户反馈「底下加一个圆圈圈是什么意思，看着非常奇怪」。
+
+   现在拆成两套：
+     .badge        —— 通用圆角标签（探针名、芯片型号等），保持原样
+     .mark         —— 列表左侧的状态图标，纯符号 + 颜色，不加底
    --------------------------------------------------------------------------- */
-.badge {
+.mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
+  width: 16px;
   height: 18px;
-  border-radius: 50%;
   flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
   line-height: 1;
 }
 
-.badge--ok {
-  background: color-mix(in oklab, var(--ok) 16%, transparent);
+.mark--ok {
   color: var(--ok);
 }
 
-.badge--warn {
-  background: color-mix(in oklab, var(--warn) 18%, transparent);
+.mark--warn {
   color: var(--warn);
 }
 
-.badge--err {
-  background: color-mix(in oklab, var(--err) 16%, transparent);
+.mark--err {
   color: var(--err);
 }
 
-.badge--info {
-  background: var(--bg-sunken);
+.mark--info {
   color: var(--fg-faint);
 }
 

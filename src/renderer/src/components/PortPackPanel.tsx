@@ -365,7 +365,7 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
                       : { mark: '✓', cls: 'ok' }
                 return (
                   <div key={i} className="checklist__row">
-                    <span className={`badge badge--${s.cls}`}>{s.mark}</span>
+                    <span className={`mark mark--${s.cls}`}>{s.mark}</span>
                     <span className="checklist__label">{it.label}</span>
                     <span className="checklist__detail checklist__detail--wrap" title={it.detail}>
                       {it.detail}
@@ -491,7 +491,7 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
                       }}
                     >
                       <span
-                        className={`badge badge--${
+                        className={`mark mark--${
                           phaseStatus === 'done'
                             ? 'ok'
                             : phaseStatus === 'active'
@@ -529,7 +529,7 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
                           const st = STEP_STYLE[s.status]
                           return (
                             <div key={s.id} className="checklist__row" style={{ alignItems: 'flex-start' }}>
-                              <span className={`badge badge--${st.cls}`} style={{ marginTop: 1 }}>
+                              <span className={`mark mark--${st.cls}`} style={{ marginTop: 1 }}>
                                 {st.mark}
                               </span>
                               <div className="grow" style={{ minWidth: 0 }}>
@@ -564,7 +564,7 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
             <div className="checklist">
               {result.acceptance.map((a: PackPortAcceptanceItem) => (
                 <div key={a.id} className="checklist__row">
-                  <span className={`badge badge--${a.ok ? 'ok' : 'err'}`}>{a.ok ? '✓' : '✗'}</span>
+                  <span className={`mark mark--${a.ok ? 'ok' : 'err'}`}>{a.ok ? '✓' : '✗'}</span>
                   <span className="checklist__label">{a.label}</span>
                   <span className="checklist__detail" title={a.detail}>
                     {a.detail}
@@ -661,7 +661,7 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
                 ['改造业务代码', '按字段替换，会改到多个源文件']
               ].map(([label, detail], i) => (
                 <div key={label} className="checklist__row">
-                  <span className="badge badge--info">{i + 1}</span>
+                  <span className="mark mark--info">{i + 1}</span>
                   <span className="checklist__label">{label}</span>
                   <span className="checklist__detail">{detail}</span>
                 </div>

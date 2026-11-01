@@ -388,7 +388,7 @@ export function PacksPage(): React.JSX.Element {
                  */
                 return (
                   <div key={i} className="checklist__row">
-                    <span className={`badge badge--${s.cls}`}>{s.mark}</span>
+                    <span className={`mark mark--${s.cls}`}>{s.mark}</span>
                     <span className="checklist__label">{c.label}</span>
                     <span
                       className="checklist__detail checklist__detail--wrap"
