@@ -800,6 +800,15 @@ export const IPC = {
   packApply: 'pack:apply',
   packPortPreflight: 'pack:portPreflight',
   packPortInstall: 'pack:portInstall',
+  /**
+   * 移植过程中的**实时进度推送**（主进程 → 渲染进程）。
+   *
+   * `ipcRenderer.invoke` 是一次往返：调用开始到结束之间，渲染进程拿不到
+   * 任何中间状态。所以移植跑着的时候界面只能显示「执行中…」，
+   * 用户盯着一个转圈等 CubeMX 那 40 秒，不知道卡在哪一步、也不知道
+   * 已经完成了多少。改成主进程每完成一步就往这条通道发一条。
+   */
+  packPortProgress: 'pack:portProgress',
 
   templateList: 'template:list',
   templateSave: 'template:save',
@@ -914,6 +923,16 @@ export interface StudioApi {
   packPortPreflight(packId: string, projectRoot: string): Promise<import('./packTypes').PackPortPreflightResult>
   /** 执行移植流水线（先存快照） */
   packPortInstall(options: { packId: string; projectRoot: string; skipCubeMx?: boolean }): Promise<import('./packTypes').PackPortResult>
+
+  /**
+   * 订阅移植进度。返回取消订阅的函数。
+   *
+   * 每一步开始、结束都会推一条，界面据此实时显示「哪一步在跑、哪几步已经好了」，
+   * 而不是等整个流程跑完才一次性看到结果。
+   */
+  onPortProgress(
+    handler: (payload: { runId: string; step: import('./packTypes').PackPortStep }) => void
+  ): () => void
 
   /** 新建一个源码文件（骨架），不自动加入构建 */
   cmakeCreateFile(

@@ -540,6 +540,8 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       _e,
       options: { packId: string; projectRoot: string; skipCubeMx?: boolean }
     ): Promise<PackPortResult> => {
+      /** 这一次运行的标识，用来把进度事件和具体某次调用对上 */
+      const runId = String(Date.now())
       const pack = listPacks().find((p) => p.id === options.packId)
       if (!pack) {
         return {
@@ -555,7 +557,25 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       return runPortInstall({
         root: options.projectRoot,
         pack,
-        skipCubeMx: options.skipCubeMx
+        skipCubeMx: options.skipCubeMx,
+        /*
+         * 每完成一步就推给渲染进程。
+         *
+         * 用 runId 区分不同的运行（用户连点两次、或者中途重跑），
+         * 界面只认当前这次，防止上一轮的残留事件把进度条弄乱。
+         *
+         * `_e.sender` 是发起这次调用的那个窗口；窗口关了 send 会抛，
+         * 所以包一层 try —— 用户关窗口不该让移植流水线崩掉。
+         */
+        onProgress: (step) => {
+          try {
+            if (!_e.sender.isDestroyed()) {
+              _e.sender.send(IPC.packPortProgress, { runId, step })
+            }
+          } catch {
+            /* 窗口没了就没人看进度了，不影响流程本身 */
+          }
+        }
       })
     }
   )

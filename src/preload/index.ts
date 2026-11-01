@@ -48,7 +48,8 @@ import type {
   PackManifest,
   PackPlan,
   PackPortPreflightResult,
-  PackPortResult
+  PackPortResult,
+  PackPortStep
 } from '@shared/packTypes'
 
 function subscribe<T>(channel: string, cb: (payload: T) => void): () => void {
@@ -120,6 +121,15 @@ const api: StudioApi = {
     ipcRenderer.invoke(IPC.packPortPreflight, packId, projectRoot) as Promise<PackPortPreflightResult>,
   packPortInstall: (options: { packId: string; projectRoot: string; skipCubeMx?: boolean }) =>
     ipcRenderer.invoke(IPC.packPortInstall, options) as Promise<PackPortResult>,
+  /**
+   * 订阅移植进度。返回取消订阅函数。
+   *
+   * 走统一的 subscribe 辅助 —— 它内部把 handler 包了一层再注册，
+   * 这样取消订阅时能拿到同一个引用。直接传原始函数的话
+   * removeListener 找不到，重跑几次后一条进度会被处理 N 遍。
+   */
+  onPortProgress: (handler) =>
+    subscribe<{ runId: string; step: PackPortStep }>(IPC.packPortProgress, handler),
 
   cmakeTrashFiles: (projectRoot, relPaths) =>
     ipcRenderer.invoke(IPC.cmakeTrashFiles, projectRoot, relPaths) as Promise<{

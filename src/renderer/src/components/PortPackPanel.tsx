@@ -13,9 +13,11 @@
 
 import React from 'react'
 import {
+  Alert,
   Button,
   Card,
   Field,
+  Modal,
   PageBody,
   PageHeader,
   Select,
@@ -53,6 +55,57 @@ const STEP_STYLE: Record<PackPortStep['status'], { mark: string; cls: string }> 
   skip: { mark: '–', cls: 'info' }
 }
 
+/**
+ * 把十几步归成 4 个大阶段。
+ *
+ * 用户的原话：「执行过程可不可以详细展示，或者至少给你分几个大的步骤、
+ * 大的区间」。平铺 11 步确实看不出「现在到哪了」—— 尤其 CubeMX 那一步
+ * 要跑 40 秒，夹在一堆秒级步骤中间，光看一行「执行中…」完全没概念。
+ *
+ * 分组之后界面能显示「阶段 2 / 4 · 正在重新生成工程（约 40 秒）」，
+ * 等待就有了预期。
+ */
+interface StepPhase {
+  id: string
+  title: string
+  hint: string
+  /** 归属的步骤 id（和主进程 emit 的 id 对应） */
+  ids: string[]
+}
+
+const STEP_PHASES: StepPhase[] = [
+  {
+    id: 'prepare',
+    title: '准备',
+    hint: '检查工程 + 存快照，不动任何文件',
+    ids: ['preflight', 'snapshot']
+  },
+  {
+    id: 'cubemx',
+    title: '改硬件配置',
+    hint: '改 .ioc 并调 CubeMX 重新生成（这一步最慢，通常 35~45 秒）',
+    // 注意：id 必须和主进程 emit 的完全一致，大小写也算
+    ids: ['ioc', 'cubemx', 'mask']
+  },
+  {
+    id: 'code',
+    title: '改代码',
+    hint: '替换模块文件 + 改造业务代码',
+    ids: ['files', 'transform', 'statemachine']
+  },
+  {
+    id: 'verify',
+    title: '验收',
+    hint: '逐项检查改完的结果',
+    ids: ['acceptance']
+  }
+]
+
+/** 一个步骤属于哪个阶段（找不到就落到最后一个，避免漏显示） */
+function phaseOf(stepId: string): StepPhase {
+  return STEP_PHASES.find((p) => p.ids.includes(stepId)) ?? STEP_PHASES[STEP_PHASES.length - 1]
+}
+
 export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.Element {
   const notify = useStudio((s) => s.notify)
 
@@ -61,8 +114,12 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
   const [running, setRunning] = React.useState(false)
   const [result, setResult] = React.useState<PackPortResult | null>(null)
   const [skipCubeMx, setSkipCubeMx] = React.useState(false)
-  /** 跑的过程中实时追加的步骤 */
+  /** 跑的过程中实时追加的步骤（同一 id 原地覆盖，见下面的订阅逻辑） */
   const [liveSteps, setLiveSteps] = React.useState<PackPortStep[]>([])
+  /** 开始执行的时间戳，用来显示「已经跑了多久」 */
+  const [startedAt, setStartedAt] = React.useState<number | null>(null)
+  /** 二次确认弹窗 */
+  const [confirmOpen, setConfirmOpen] = React.useState(false)
 
   /*
    * 模块包模板。
@@ -150,19 +207,42 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
     void doPreflight()
   }, [doPreflight])
 
+  /*
+   * 实时进度订阅。
+   *
+   * 以前这里是「等 invoke 返回再一次性显示结果」——跑 CubeMX 那 40 秒里
+   * 界面只有一个转圈和「执行中…」，用户完全不知道进行到哪、卡没卡。
+   * 主进程现在每完成一步就推一条，这里按 step.id 覆盖同一行
+   * （先 running 后 ok/err），所以列表是**原地更新**而不是越堆越长。
+   */
+  React.useEffect(() => {
+    const off = window.api.onPortProgress(({ step }) => {
+      setLiveSteps((prev) => {
+        const idx = prev.findIndex((s) => s.id === step.id)
+        if (idx < 0) return [...prev, step]
+        const next = prev.slice()
+        next[idx] = step
+        return next
+      })
+    })
+    return off
+  }, [])
+
   const run = async (): Promise<void> => {
     setRunning(true)
     setResult(null)
     setLiveSteps([])
+    // 记一下开始时间，用来在界面上显示「已经跑了多久」
+    setStartedAt(Date.now())
     try {
-      // 主进程一次性跑完整个流水线，中途没法回调进度
-      // （IPC invoke 是单次往返）。所以这里先显示「正在执行」。
       const r = await window.api.packPortInstall({
         packId: pack.id,
         projectRoot,
         skipCubeMx
       })
       setResult(r)
+      // 保险：万一有进度事件没送到（窗口切走等），用最终结果兜底覆盖
+      setLiveSteps(r.steps)
       if (r.ok) {
         notify('ok', `移植完成，${r.acceptance.filter((a) => a.ok).length} 项验收通过`)
       } else {
@@ -179,6 +259,56 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
 
   const blocked = preflight ? !preflight.ok : false
   const steps = result?.steps ?? liveSteps
+
+  /*
+   * 各阶段的整体状态。
+   *
+   * done   ：这一段里的步骤全跑完了（允许有 skip）
+   * failed ：这一段里有出错的
+   * active ：有步骤正在跑，或者前面的都完了、这一段是下一个要跑的
+   * pending：还没轮到
+   */
+  const getPhaseStatus = (
+    phase: StepPhase,
+    all: PackPortStep[],
+    isRunning: boolean
+  ): 'done' | 'failed' | 'active' | 'pending' => {
+    const mine = all.filter((s) => phaseOf(s.id).id === phase.id)
+    if (mine.some((s) => s.status === 'err')) return 'failed'
+    if (mine.some((s) => s.status === 'running')) return 'active'
+    if (mine.length > 0 && mine.every((s) => s.status === 'ok' || s.status === 'skip')) {
+      return 'done'
+    }
+    if (!isRunning) return mine.length ? 'done' : 'pending'
+    // 正在跑：第一个还没 done 的阶段就是当前阶段
+    const idx = STEP_PHASES.findIndex((p) => p.id === phase.id)
+    const firstUndone = STEP_PHASES.findIndex((p) => {
+      const l = all.filter((s) => phaseOf(s.id).id === p.id)
+      return l.length > 0 && !l.every((s) => s.status === 'ok' || s.status === 'skip')
+    })
+    return idx === firstUndone ? 'active' : 'pending'
+  }
+
+  /** 当前正在跑的那个阶段（用来在卡片标题上显示） */
+  const currentPhase = React.useMemo(() => {
+    if (!running) return null
+    return (
+      STEP_PHASES.find((p) => getPhaseStatus(p, steps, true) === 'active') ?? null
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, steps])
+
+  /**
+   * 已用时间。每秒刷一次 —— 跑 CubeMX 那 40 秒里，有个跳秒的计时器
+   * 比一个静止的转圈更让人安心。
+   */
+  const [now, setNow] = React.useState(Date.now())
+  React.useEffect(() => {
+    if (!running) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [running])
+  const elapsed = running && startedAt ? Math.floor((now - startedAt) / 1000) : null
 
   return (
     <>
@@ -206,7 +336,12 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
               {checking ? <Spinner /> : <Icons.refresh />}
               重新预检
             </Button>
-            <Button size="sm" variant="primary" disabled={blocked || running} onClick={() => void run()}>
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={blocked || running}
+              onClick={() => setConfirmOpen(true)}
+            >
               {running ? <Spinner /> : <Icons.write />}
               {running ? '正在移植…' : '开始移植'}
             </Button>
@@ -314,42 +449,108 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
           </div>
         </Card>
 
-        {/* ---- ③ 执行过程 ---- */}
+        {/* ---- ③ 执行过程（按 4 个大阶段分组，实时更新）---- */}
         {(running || steps.length > 0) && (
           <Card
             title="③ 执行过程"
-            hint={running ? '正在跑，CubeMX 那一步约 40 秒' : '已完成'}
+            hint={
+              running
+                ? `进行中${currentPhase ? ` · ${currentPhase.title}` : ''}`
+                : '已完成'
+            }
+            actions={
+              running && elapsed !== null ? (
+                <span className="small faint">已用 {elapsed} 秒</span>
+              ) : steps.length > 0 ? (
+                <span className="small faint">
+                  {steps.filter((s) => s.status === 'ok').length} / {steps.length} 步完成
+                </span>
+              ) : null
+            }
           >
-            <div className="checklist">
-              {steps.map((s, i) => {
-                const st = STEP_STYLE[s.status]
+            {/*
+              大阶段分组。
+              用户的原话是「至少给你分几个大的步骤、大的区间」——
+              十一步平铺看不出进度，尤其 CubeMX 那步要等 40 秒。
+              现在每段有标题、有「等待中 / 进行中 / 已完成」的徽标，
+              跑的时候一眼能看出走到哪一段了。
+            */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {STEP_PHASES.map((phase, pi) => {
+                const list = steps.filter((s) => phaseOf(s.id).id === phase.id)
+                const phaseStatus = getPhaseStatus(phase, steps, running)
+                if (list.length === 0 && phaseStatus === 'pending') return null
                 return (
-                  <div key={`${s.id}-${i}`} className="checklist__row" style={{ alignItems: 'flex-start' }}>
-                    <span
-                      className={`badge badge--${st.cls}`}
-                      style={{ marginTop: 1 }}
+                  <div key={phase.id}>
+                    <div
+                      className="row"
+                      style={{
+                        gap: 8,
+                        alignItems: 'center',
+                        marginBottom: list.length ? 4 : 0
+                      }}
                     >
-                      {st.mark}
-                    </span>
-                    <div className="grow" style={{ minWidth: 0 }}>
-                      <div className="small">{s.label}</div>
-                      {s.detail && (
-                        <div className="faint small" style={{ whiteSpace: 'pre-wrap', marginTop: 2 }}>
-                          {s.detail}
-                        </div>
-                      )}
+                      <span
+                        className={`badge badge--${
+                          phaseStatus === 'done'
+                            ? 'ok'
+                            : phaseStatus === 'active'
+                              ? 'info'
+                              : phaseStatus === 'failed'
+                                ? 'err'
+                                : 'info'
+                        }`}
+                      >
+                        {phaseStatus === 'done'
+                          ? '✓'
+                          : phaseStatus === 'active'
+                            ? '…'
+                            : phaseStatus === 'failed'
+                              ? '✗'
+                              : pi + 1}
+                      </span>
+                      <span className="small bold">
+                        {pi + 1}. {phase.title}
+                      </span>
+                      <span className="faint small">
+                        {phaseStatus === 'active'
+                          ? phase.hint
+                          : phaseStatus === 'done'
+                            ? '已完成'
+                            : phaseStatus === 'failed'
+                              ? '出错了'
+                              : '等待中'}
+                      </span>
                     </div>
+
+                    {list.length > 0 && (
+                      <div className="checklist" style={{ paddingLeft: 26 }}>
+                        {list.map((s) => {
+                          const st = STEP_STYLE[s.status]
+                          return (
+                            <div key={s.id} className="checklist__row" style={{ alignItems: 'flex-start' }}>
+                              <span className={`badge badge--${st.cls}`} style={{ marginTop: 1 }}>
+                                {st.mark}
+                              </span>
+                              <div className="grow" style={{ minWidth: 0 }}>
+                                <div className="small">{s.label}</div>
+                                {s.detail && (
+                                  <div
+                                    className="faint small"
+                                    style={{ whiteSpace: 'pre-wrap', marginTop: 2 }}
+                                  >
+                                    {s.detail}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 )
               })}
-              {running && (
-                <div className="checklist__row">
-                  <span className="badge badge--info">
-                    <Spinner />
-                  </span>
-                  <div className="grow small faint">执行中…</div>
-                </div>
-              )}
             </div>
           </Card>
         )}
@@ -420,6 +621,65 @@ export function PortPackPanel({ pack, projectRoot, onBack }: Props): React.JSX.E
           </Card>
         )}
       </PageBody>
+
+      {/*
+        二次确认。
+        用户的原话：「执行前怎么没有二次确认」。
+
+        这个操作会**改 .ioc、调 CubeMX 重新生成、替换/改写十几个源文件**，
+        是不可逆的重操作（只能靠快照还原）。点一下按钮就直接开跑，
+        既没有心理准备也没法反悔。确认框把「要动哪些东西」逐条列出来。
+      */}
+      {confirmOpen && (
+        <Modal
+          title="确认开始移植？"
+          onClose={() => setConfirmOpen(false)}
+          footer={
+            <>
+              <Button onClick={() => setConfirmOpen(false)}>取消</Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  setConfirmOpen(false)
+                  void run()
+                }}
+              >
+                确认，开始
+              </Button>
+            </>
+          }
+        >
+          <div className="small" style={{ lineHeight: 1.8 }}>
+            <div style={{ marginBottom: 10 }}>
+              会改动 <span className="mono">{projectRoot}</span> 里的这些内容：
+            </div>
+            <div className="checklist">
+              {[
+                ['先存一份快照', '出问题可在「历史与恢复」还原'],
+                ['改 .ioc 配置', skipCubeMx ? '演示模式，跳过' : '改完由 CubeMX 重新生成'],
+                ['替换模块文件', '会覆盖同名文件'],
+                ['改造业务代码', '按字段替换，会改到多个源文件']
+              ].map(([label, detail], i) => (
+                <div key={label} className="checklist__row">
+                  <span className="badge badge--info">{i + 1}</span>
+                  <span className="checklist__label">{label}</span>
+                  <span className="checklist__detail">{detail}</span>
+                </div>
+              ))}
+            </div>
+
+            {skipCubeMx && (
+              <div style={{ marginTop: 12 }}>
+                <Alert kind="warn">当前勾了「演示模式」：不会动 .ioc，也不调 CubeMX。</Alert>
+              </div>
+            )}
+
+            <div className="faint small" style={{ marginTop: 12 }}>
+              {skipCubeMx ? '预计 5 秒内完成。' : 'CubeMX 那一步通常要 35~45 秒，中间别关窗口。'}
+            </div>
+          </div>
+        </Modal>
+      )}
     </>
   )
 }
