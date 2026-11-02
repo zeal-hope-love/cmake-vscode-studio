@@ -252,9 +252,21 @@ writeFileSync(
     `electronVersion: ${electronVersion}`,
     'npmRebuild: false',
     `afterPack: ${join(root, 'tools', 'trim-setup.cjs').replace(/\\/g, '/')}`,
+    /*
+     * payload 是 265 MB 的完整 Electron 应用（含 235 MB 主程序），
+     * **不能塞进 asar** —— asar 启动时要建索引，这么大的包会让
+     * 安装器窗口黑屏好几秒。用 extraResources 放到 asar 外面。
+     */
     'files:',
-    '  - app/**',
-    '  - package.json'
+    '  - app/main.js',
+    '  - app/preload.js',
+    '  - app/renderer/**',
+    '  - app/meta.json',
+    '  - app/icon.png',
+    '  - package.json',
+    'extraResources:',
+    '  - from: app/payload',
+    '    to: payload'
   ].join('\n'),
   'utf8'
 )

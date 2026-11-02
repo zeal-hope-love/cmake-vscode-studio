@@ -42,6 +42,14 @@ let win: BrowserWindow | null = null
 function payloadDir(): string {
   // 开发时可以直接指向 release/win-unpacked，方便调试界面
   if (process.env['CVSTUDIO_PAYLOAD']) return process.env['CVSTUDIO_PAYLOAD']
+
+  /*
+   * 打包后 payload 在 `resources/payload/`（extraResources 放的），
+   * **不在 asar 里** —— 265 MB 塞进 asar 会让窗口黑屏好几秒。
+   * 开发态（没打包）时退回 asar 内的路径。
+   */
+  const outside = join(process.resourcesPath, 'payload')
+  if (existsSync(outside)) return outside
   return join(app.getAppPath(), 'payload')
 }
 
@@ -360,7 +368,21 @@ function createWindow(): void {
   })
 
   Menu.setApplicationMenu(null)
-  win.loadFile(join(__dirname, '..', 'renderer', 'index.html'))
+  /*
+   * `__dirname` 就是 asar 里的 `app/` 目录 —— 界面在它的 `renderer/` 子目录下。
+   *
+   * 早先这里写成 `join(__dirname, '..', 'renderer', 'index.html')`，
+   * 多退了一层、指向 asar 根下的 renderer（不存在）→ 窗口一片全黑。
+   */
+  win.loadFile(join(__dirname, 'renderer', 'index.html'))
+
+  // 加载失败时把原因打出来，别再让人对着黑窗口猜
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.error('[installer] 界面加载失败', code, desc, url)
+  })
+  win.webContents.on('console-message', (_e, _level, message) => {
+    console.log('[renderer]', message)
+  })
   win.on('closed', () => {
     win = null
   })
