@@ -562,9 +562,22 @@
         })
 
         $('progress').classList.remove('on')
-        $('result').classList.add('on')
         $('action').disabled = false
         $('cancel').style.display = ''
+
+        /*
+         * 用户主动点了「取消安装」—— 退回表单页，不显示失败。
+         * 那是他的选择，不是出错。
+         */
+        if (r.cancelled) {
+          state = 'idle'
+          $('form').style.display = ''
+          $('action').textContent = '安装'
+          $('cancel').textContent = '取消'
+          return
+        }
+
+        $('result').classList.add('on')
 
         if (r.ok) {
           state = 'done'

@@ -298,6 +298,73 @@ function isAppRunning(): Promise<boolean> {
 }
 
 /**
+ * 结束正在运行的 CV Studio。
+ *
+ * 为什么安装器要自己动手：Windows 上程序开着的时候 exe 被锁，
+ * 覆盖安装必然失败（EPERM / EBUSY）。让用户自己去任务管理器找进程
+ * 太麻烦 —— 而且这个应用有个托盘图标，很多人不知道要连托盘一起退。
+ *
+ * 会先弹窗确认，绝不静默杀进程：万一用户正在里面改配置，
+ * 被杀掉会丢东西，得让他自己决定。
+ *
+ * @returns true 表示可以继续安装（本来就关着，或者成功关掉了）
+ */
+async function ensureAppStopped(): Promise<{ ok: boolean; reason?: string; cancelled?: boolean }> {
+  if (!(await isAppRunning())) return { ok: true }
+
+  const choice = await dialog.showMessageBox(win!, {
+    type: 'question',
+    buttons: ['自动关闭并继续', '我自己关', '取消安装'],
+    defaultId: 0,
+    cancelId: 2,
+    title: '程序正在运行',
+    message: `${meta.productName} 正在运行`,
+    detail:
+      `安装需要覆盖程序文件，但 ${meta.productName} 还在运行，文件被占用。\n\n` +
+      '点「自动关闭并继续」会结束它的所有进程（包括托盘里的），' +
+      '如果你正在里面做没保存的操作，请选「我自己关」。',
+    noLink: true
+  })
+
+  if (choice.response === 2) return { ok: false, cancelled: true }
+  if (choice.response === 1) {
+    // 让用户自己去关，然后回头再查一次
+    const stillRunning = await isAppRunning()
+    if (stillRunning) {
+      return {
+        ok: false,
+        reason: `请先关闭 ${meta.productName}（记得连托盘图标一起退出），然后再点重试。`
+      }
+    }
+    return { ok: true }
+  }
+
+  // 自动关闭：/F 强制，/T 连子进程一起（Electron 有一堆 renderer 子进程）
+  await new Promise<void>((resolve) => {
+    execFile(
+      'taskkill.exe',
+      ['/F', '/T', '/IM', meta.executableName],
+      { windowsHide: true },
+      () => resolve()
+    )
+  })
+
+  /*
+   * taskkill 返回不代表进程已经退干净 —— Electron 的 GPU / 网络进程
+   * 可能还在收尾。等最多 3 秒，每 300ms 查一次。
+   */
+  for (let i = 0; i < 10; i++) {
+    if (!(await isAppRunning())) return { ok: true }
+    await new Promise((r) => setTimeout(r, 300))
+  }
+
+  return {
+    ok: false,
+    reason: `${meta.productName} 没能自动关闭。请手动结束它（任务管理器里搜「${meta.productName}」），再点重试。`
+  }
+}
+
+/**
  * 从明文目录复制（体积大、速度快）。
  *
  * 每个文件复制完就推一次进度，但**每 40ms 限一次** ——
@@ -387,17 +454,17 @@ ipcMain.handle('installer:install', async (_e, opts: InstallOptions) => {
      * 先确认上一版没在运行。
      *
      * 这是 Windows 上最常见的安装失败原因：exe 还在跑，文件被锁，
-     * 改名 EBUSY、删除 EPERM。与其让用户看到一串错误码，
-     * 不如提前查一下、直接告诉他该怎么办。
+     * 改名 EBUSY、删除 EPERM。与其让用户对着一串错误码发呆，
+     * 不如弹窗问一句「要不要帮你关掉」—— 同意就直接 taskkill。
      */
-    const running = await isAppRunning()
-    if (running) {
-      return {
-        ok: false,
-        error:
-          `${meta.productName} 正在运行，没法覆盖安装。\n\n` +
-          '请先把它关掉（包括托盘里的图标），然后再点重试。'
-      }
+    const stopped = await ensureAppStopped()
+    if (!stopped.ok) {
+      /*
+       * 用户点「取消安装」是主动放弃，不是错误 —— 界面那边看到
+       * cancelled 就退回表单页，不弹红框。
+       * 选了「我自己关」但程序还开着，才需要给提示。
+       */
+      return { ok: false, cancelled: stopped.cancelled, error: stopped.reason ?? '' }
     }
 
     send({ stage: '准备中', percent: 0, current: '', done: 0, total: 0, bytesDone: 0, bytesTotal: 0 })
