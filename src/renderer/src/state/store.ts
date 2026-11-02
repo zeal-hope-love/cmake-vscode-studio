@@ -136,6 +136,13 @@ interface StudioState {
   bootstrap: () => Promise<void>
   setPage: (page: PageKey) => void
   setTheme: (theme: AppSettings['theme']) => Promise<void>
+  /**
+   * 保存任意设置项并同步到 store。
+   *
+   * 为什么要有这个：以前每个设置项都单独写一个方法（setTheme 之类），
+   * 加一个开关就要动一次 store 的接口。这里统一成 patch 风格。
+   */
+  saveSettings: (patch: Partial<AppSettings>) => Promise<void>
   notify: (kind: Toast['kind'], text: string, ms?: number) => void
   dismissToast: (id: number) => void
   setError: (text: string | null) => void
@@ -329,6 +336,18 @@ export const useStudio = create<StudioState>()((set, get) => ({
       await window.api.setWindowTheme(theme)
     } catch (err) {
       get().notify('err', `主题已切换，但没能保存到设置文件：${err instanceof Error ? err.message : String(err)}`)
+    }
+  },
+
+  saveSettings: async (patch) => {
+    try {
+      const settings = await window.api.saveSettings(patch)
+      set({ settings })
+    } catch (err) {
+      get().notify(
+        'err',
+        `设置没保存成功：${err instanceof Error ? err.message : String(err)}`
+      )
     }
   },
 

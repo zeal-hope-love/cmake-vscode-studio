@@ -615,6 +615,13 @@ export interface AppSettings {
   /** 界面上可拖动区域的宽度：'nav' / 'split' 等 → 像素 */
   uiWidths: Record<string, number>
   /**
+   * 启动时检查 GitHub Releases 有没有新版本。
+   *
+   * 默认开 —— 检查是静默的（只发一个 GET，失败不打扰），
+   * 有新版本才在界面上提示一次。
+   */
+  checkUpdates: boolean
+  /**
    * Live Watch 的默认值（跨工程记忆）。
    * 这是「用户习惯」而不是「工程属性」，所以放设置里。
    *
@@ -642,7 +649,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   // Live Watch 默认开启（用户要求）：新装即生效，不用每次手动勾
   liveWatch: true,
   liveWatchSamplesPerSecond: 4,
-  liveWatchRefreshRate: 300
+  liveWatchRefreshRate: 300,
+  checkUpdates: true
 }
 
 // ==========================================================================
@@ -810,6 +818,11 @@ export const IPC = {
    */
   packPortProgress: 'pack:portProgress',
 
+  /** 检查更新（读 GitHub Releases） */
+  checkUpdate: 'app:checkUpdate',
+  /** 打开 Release 页面 / 下载指定附件 */
+  openExternal: 'app:openExternal',
+
   templateList: 'template:list',
   templateSave: 'template:save',
   templateDelete: 'template:delete',
@@ -921,6 +934,15 @@ export interface StudioApi {
   //                           没法事先算出完整 diff，靠「快照 + 回滚」保底
   /** 移植前预检，只读 */
   packPortPreflight(packId: string, projectRoot: string): Promise<import('./packTypes').PackPortPreflightResult>
+  /**
+   * 检查有没有新版本。
+   *
+   * @param force 忽略缓存强制重新请求（用户点「检查更新」时）
+   */
+  checkUpdate(force?: boolean): Promise<import('./updateTypes').UpdateInfo>
+  /** 用系统浏览器打开 URL（Release 页面、下载链接） */
+  openExternal(url: string): Promise<void>
+
   /** 执行移植流水线（先存快照） */
   packPortInstall(options: { packId: string; projectRoot: string; skipCubeMx?: boolean }): Promise<import('./packTypes').PackPortResult>
 

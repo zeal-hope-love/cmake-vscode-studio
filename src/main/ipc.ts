@@ -108,6 +108,7 @@ import {
 } from './services/snapshotStore'
 import { currentUserDataDir, userDataPath } from './services/store'
 import { ProcessRunner } from './services/runner'
+import { checkForUpdate } from './services/updateChecker'
 import { applyProjectRename, planProjectRename } from './services/projectRename'
 
 const runner = new ProcessRunner()
@@ -579,6 +580,20 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       })
     }
   )
+
+  // ---- 更新检测 ---------------------------------------------------------
+  ipcMain.handle(IPC.checkUpdate, async (_e, force?: boolean) => checkForUpdate(force))
+
+  ipcMain.handle(IPC.openExternal, async (_e, url: string) => {
+    /*
+     * 只放行 http(s) —— 这个接口会被渲染进程传入任意字符串，
+     * 不校验的话 `file://` 之类可以用它打开本地文件甚至执行程序。
+     */
+    if (!/^https?:\/\//i.test(url)) {
+      throw new Error('只允许打开 http(s) 链接')
+    }
+    await shell.openExternal(url)
+  })
 
   // ---- 模板 -------------------------------------------------------------
   ipcMain.handle(IPC.templateList, async () => listTemplates())

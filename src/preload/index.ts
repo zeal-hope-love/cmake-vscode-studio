@@ -131,6 +131,10 @@ const api: StudioApi = {
   onPortProgress: (handler) =>
     subscribe<{ runId: string; step: PackPortStep }>(IPC.packPortProgress, handler),
 
+  checkUpdate: (force?: boolean) =>
+    ipcRenderer.invoke(IPC.checkUpdate, force) as Promise<import('@shared/updateTypes').UpdateInfo>,
+  openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url) as Promise<void>,
+
   cmakeTrashFiles: (projectRoot, relPaths) =>
     ipcRenderer.invoke(IPC.cmakeTrashFiles, projectRoot, relPaths) as Promise<{
       ok: boolean

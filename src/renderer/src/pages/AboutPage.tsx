@@ -8,10 +8,48 @@ import React from 'react'
 import { useStudio } from '../state/store'
 import { Button, Card, PageBody, PageHeader } from '../components/ui'
 import { AboutInfo } from '../components/AboutInfo'
+import { UpdateNotice } from '../components/UpdateNotice'
+import type { UpdateInfo } from '@shared/updateTypes'
 import { Icons } from '../components/icons'
 
 export default function AboutPage(): React.JSX.Element {
   const appInfo = useStudio((s) => s.appInfo)
+  const settings = useStudio((s) => s.settings)
+  const saveSettings = useStudio((s) => s.saveSettings)
+  /*
+   * 更新检测状态放这个页面自己管，不进全局 store ——
+   * 只有这一页看得到，没必要让所有页面跟着重渲染。
+   */
+  const [update, setUpdate] = React.useState<UpdateInfo | null>(null)
+  const [checking, setChecking] = React.useState(false)
+
+  const doCheck = React.useCallback(async (force: boolean): Promise<void> => {
+    setChecking(true)
+    try {
+      setUpdate(await window.api.checkUpdate(force))
+    } catch (err) {
+      setUpdate({
+        currentVersion: appInfo?.version ?? '',
+        latestVersion: '',
+        hasUpdate: false,
+        releaseUrl: '',
+        releaseName: '',
+        notes: '',
+        publishedAt: '',
+        assets: [],
+        status: 'error',
+        detail: err instanceof Error ? err.message : String(err)
+      })
+    } finally {
+      setChecking(false)
+    }
+  }, [appInfo?.version])
+
+  // 进页面就查一次（走缓存，不会每次都打 GitHub）
+  React.useEffect(() => {
+    void doCheck(false)
+  }, [doCheck])
+
   const resetOnboarding = useStudio((s) => s.resetOnboarding)
   const openHelp = useStudio((s) => s.openHelp)
 
@@ -34,6 +72,14 @@ export default function AboutPage(): React.JSX.Element {
       />
 
       <PageBody>
+        <UpdateNotice
+          info={update}
+          checking={checking}
+          onCheck={() => void doCheck(true)}
+          autoCheck={settings.checkUpdates !== false}
+          onToggleAutoCheck={(v) => void saveSettings({ checkUpdates: v })}
+        />
+
         <Card title="版本与运行环境" hint="出问题时把这段发出来，能省很多来回">
           <AboutInfo />
         </Card>

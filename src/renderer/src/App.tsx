@@ -12,6 +12,8 @@ import { Sidebar, StatusBar, ToastHost } from './components/shell'
 import { PreviewModal } from './components/PreviewModal'
 import { Onboarding } from './components/Onboarding'
 import { Alert, Button, EmptyState, PageBody } from './components/ui'
+import { UpdateNotice } from './components/UpdateNotice'
+import type { UpdateInfo } from '@shared/updateTypes'
 import ProjectPage from './pages/ProjectPage'
 import SourcesPage from './pages/SourcesPage'
 import PacksPage from './pages/PacksPage'
@@ -62,6 +64,34 @@ export default function App(): React.JSX.Element {
   React.useEffect(() => bindRunEvents(), [bindRunEvents])
   React.useEffect(() => bindWriteProgress(), [bindWriteProgress])
 
+  /*
+   * 启动时的更新检查。
+   *
+   * 三个刻意的设计：
+   *   1. **延迟 3 秒** —— 先让界面出来、让用户能干活，
+   *      别在启动那一刻跟主进程抢资源。
+   *   2. **只查一次**（会话内记忆）—— 切页、重渲染都不再触发。
+   *   3. **失败静默** —— 没网、被墙、限流都不打扰，只在「关于」页显示。
+   *      用户打开工具是为了干活，不是来看错误提示的。
+   */
+  const [update, setUpdate] = React.useState<UpdateInfo | null>(null)
+  const [updateDismissed, setUpdateDismissed] = React.useState(false)
+  const updateChecked = React.useRef(false)
+
+  React.useEffect(() => {
+    if (updateChecked.current) return
+    updateChecked.current = true
+    const t = setTimeout(() => {
+      void window.api
+        .checkUpdate(false)
+        .then((info) => setUpdate(info))
+        .catch(() => {
+          /* 静默失败：这里不打扰用户 */
+        })
+    }, 3000)
+    return () => clearTimeout(t)
+  }, [])
+
   const Page = PAGES[activePage]
 
   return (
@@ -77,6 +107,19 @@ export default function App(): React.JSX.Element {
             都会先渲染自己的 PageHeader，正文用统一的 <NoProject />。
             外壳拦的话页面标题会丢，而且和页面自己的空状态长得不一样。
           */}
+          {/* 有新版本时在页面顶部挂一条提示；点 ✕ 就本次启动不再出现 */}
+          {!updateDismissed && (
+            <div style={{ padding: '14px 18px 0' }}>
+              <UpdateNotice
+                info={update}
+                checking={false}
+                onCheck={() => void window.api.checkUpdate(true).then(setUpdate)}
+                onDismiss={() => setUpdateDismissed(true)}
+                compact
+              />
+            </div>
+          )}
+
           <Page />
 
           {errorText && (

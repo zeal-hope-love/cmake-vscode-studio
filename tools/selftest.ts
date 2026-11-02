@@ -14,6 +14,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { buildTemplateFile, parseTemplateFile, TEMPLATE_FORMAT_DOC, isBuiltinPresetId } from '../src/shared/templateFormat'
 import { listBuiltinPackPresets } from '../src/main/services/packPresetStore'
+import { compareVersion } from '../src/shared/versionCompare'
 import {
   captureSnapshotDetailed,
   configureSnapshots,
@@ -2126,6 +2127,27 @@ const samplePreset = {
 }
 
 // ==========================================================================
+
+// ==========================================================================
+// 20. 版本比较（更新检测要用）
+// ==========================================================================
+
+{
+  section('20. 版本比较')
+
+  check('版本比较: 2.0.0 > 1.9.9', compareVersion('2.0.0', '1.9.9') > 0)
+  check('版本比较: 1.9.9 < 2.0.0', compareVersion('1.9.9', '2.0.0') < 0)
+  check('版本比较: 相同版本返回 0', compareVersion('2.0.0', '2.0.0') === 0)
+
+  /*
+   * 这一条是关键 —— 按字符串比会得出 '2.0.10' < '2.0.9' 的错误结论。
+   */
+  check('版本比较: 2.0.10 > 2.0.9（不能按字符串比）', compareVersion('2.0.10', '2.0.9') > 0)
+
+  check('版本比较: 忽略 v 前缀', compareVersion('v2.1.0', '2.0.0') > 0)
+  check('版本比较: 忽略预发布后缀', compareVersion('2.0.0-beta', '2.0.0') === 0)
+  check('版本比较: 段数不同时短的补零', compareVersion('2.1', '2.1.0') === 0)
+}
 
 section('结果')
 console.log(`  共 ${checks} 项检查，失败 ${failures} 项`)
