@@ -29,6 +29,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync
@@ -219,6 +220,83 @@ type Send = (p: {
   bytesTotal: number
 }) => void
 
+
+/**
+ * 递归建目录，**顺手清掉挡路的同名文件**。
+ *
+ * `mkdirSync(..., { recursive: true })` 遇到路径中间有一段是文件时
+ * 会抛 ENOTDIR。安装器必须能从上一次失败的残留里恢复，
+ * 所以这里自己逐段走：是文件就删掉，是目录就继续。
+ */
+function ensureDir(dir: string): void {
+  const sep = dir.includes('/') && !dir.includes('\\') ? '/' : '\\'
+  const parts = dir.split(/[\\/]/).filter(Boolean)
+  let cur = parts[0] && parts[0].endsWith(':') ? parts[0] + sep : ''
+  for (const part of parts) {
+    if (part.endsWith(':')) continue
+    cur = cur ? join(cur, part) : part
+    if (existsSync(cur)) {
+      if (!statSync(cur).isDirectory()) {
+        // 同名文件挡在目录位置 → 删掉它
+        rmSync(cur, { force: true })
+        mkdirSync(cur, { recursive: true })
+      }
+    } else {
+      mkdirSync(cur, { recursive: true })
+    }
+  }
+}
+
+
+/**
+ * 把 src 里的文件**逐个覆盖**到 dst（不删除 dst 里多出来的文件）。
+ *
+ * 用在「目标目录被占用、没法整体替换」的兜底场景。
+ * 遇到删不掉也写不进的文件时，把路径报上去 —— 用户才知道要先关程序。
+ */
+function copyTreeOverwrite(src: string, dst: string): void {
+  for (const name of readdirSync(src)) {
+    const from = join(src, name)
+    const to = join(dst, name)
+    if (statSync(from).isDirectory()) {
+      ensureDir(to)
+      copyTreeOverwrite(from, to)
+      continue
+    }
+    try {
+      copyFileSync(from, to)
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? ''
+      throw new Error(
+        `覆盖 ${name} 失败（${code}）。\n` +
+          `多半是上一版 CV Studio 还开着，请先关掉它再重试。`
+      )
+    }
+  }
+}
+
+
+/**
+ * 检查目标程序是否正在运行。
+ *
+ * 用 tasklist 而不是遍历进程 —— 安装器是 Electron，
+ * 拿到的 process 列表里只有自己这个应用，看不到别的。
+ */
+function isAppRunning(): Promise<boolean> {
+  const imageName = meta.executableName.replace(/\.exe$/i, '')
+  return new Promise((resolve) => {
+    execFile(
+      'tasklist.exe',
+      ['/FI', `IMAGENAME eq ${meta.executableName}`, '/NH'],
+      { windowsHide: true },
+      (err, stdout) => {
+        if (err) return resolve(false)
+        resolve(stdout.toLowerCase().includes(imageName.toLowerCase()))
+      }
+    )
+  })
+}
+
 /**
  * 从明文目录复制（体积大、速度快）。
  *
@@ -247,8 +325,20 @@ async function installFromDirectory(src: string, dest: string, send: Send): Prom
     const abs = files[i]
     const rel = relative(src, abs)
     const target = join(dest, rel)
-    mkdirSync(dirname(target), { recursive: true })
-    copyFileSync(abs, target)
+    /*
+     * 逐文件报错要给足上下文。
+     *
+     * ENOTDIR 的意思是「路径上某一段是文件，不是目录」——
+     * 只说 ENOTDIR 完全不知道是哪一段。常见于上一次装到一半失败，
+     * 目标里留了个同名文件挡在目录位置。
+     */
+    try {
+      ensureDir(dirname(target))
+      copyFileSync(abs, target)
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? ''
+      throw new Error(`复制 ${rel} 失败（${code}）→ ${target}`)
+    }
     bytesDone += sizes[i]
 
     const now = Date.now()
@@ -293,27 +383,92 @@ ipcMain.handle('installer:install', async (_e, opts: InstallOptions) => {
   }
 
   try {
-    send({ stage: '准备中', percent: 0, current: '', done: 0, total: 0, bytesDone: 0, bytesTotal: 0 })
-
-    // 目标目录里如果有旧版本，先清掉 —— 否则残留的旧文件会让主程序加载到混合版本
-    if (existsSync(dest)) {
-      send({ stage: '清理旧版本', percent: 0, current: dest, done: 0, total: 0, bytesDone: 0, bytesTotal: 0 })
-      /*
-       * 目标路径必须是目录。如果它是个同名文件（用户手滑，或者上一版装坏了），
-       * 直接 readdirSync 会抛 ENOTDIR —— 那就先删掉它。
-       */
-      const st = statSync(dest)
-      if (!st.isDirectory()) {
-        rmSync(dest, { force: true })
-      } else {
-        for (const name of readdirSync(dest)) {
-          rmSync(join(dest, name), { recursive: true, force: true })
-        }
+    /*
+     * 先确认上一版没在运行。
+     *
+     * 这是 Windows 上最常见的安装失败原因：exe 还在跑，文件被锁，
+     * 改名 EBUSY、删除 EPERM。与其让用户看到一串错误码，
+     * 不如提前查一下、直接告诉他该怎么办。
+     */
+    const running = await isAppRunning()
+    if (running) {
+      return {
+        ok: false,
+        error:
+          `${meta.productName} 正在运行，没法覆盖安装。\n\n` +
+          '请先把它关掉（包括托盘里的图标），然后再点重试。'
       }
     }
-    mkdirSync(dest, { recursive: true })
 
-    await installFromDirectory(src, dest, send)
+    send({ stage: '准备中', percent: 0, current: '', done: 0, total: 0, bytesDone: 0, bytesTotal: 0 })
+
+    /*
+     * 先解到**旁边的临时目录**，全部成功后再整体替换。
+     *
+     * 为什么不直接往目标目录里写：
+     * 上一次装一半失败会留下残缺的文件树，其中某个文件名正好占着
+     * 这次要建的目录位置，`mkdirSync` 就抛 ENOTDIR（用户实测碰到过）。
+     * 逐段检查太脆弱，不如换个顺序 —— 新内容先完整落在干净目录里，
+     * 最后一步才动目标，要么完整替换要么原样不动。
+     */
+    const stamp = Date.now()
+    const stage1 = `${dest}.new-${stamp}`
+    const old1 = `${dest}.old-${stamp}`
+    rmSync(stage1, { recursive: true, force: true })
+    mkdirSync(stage1, { recursive: true })
+
+    await installFromDirectory(src, stage1, send)
+
+    // ---- 整体替换 ----
+    send({ stage: '替换旧版本', percent: 100, current: dest, done: 0, total: 0, bytesDone: 0, bytesTotal: 0 })
+
+    if (existsSync(dest)) {
+      rmSync(old1, { recursive: true, force: true })
+
+      /*
+       * 旧目录可能**正被占用**（用户还开着上一版 CV Studio）。
+       * Windows 上被占用的目录改名会 EBUSY、删除会 EPERM。
+       *
+       * 策略：
+       *   1) 先试着改名挪走 —— 最快，且能保证「要么全换要么不动」
+       *   2) 改名失败就逐项删（删不掉的跳过，最后再覆盖写）
+       *   3) 都不行就明确告诉用户「请先关掉正在运行的程序」
+       */
+      let movedAway = false
+      try {
+        renameSync(dest, old1)
+        movedAway = true
+      } catch {
+        // 挪不走，退而求其次：清空能删的
+        try {
+          for (const name of readdirSync(dest)) {
+            try {
+              rmSync(join(dest, name), { recursive: true, force: true })
+            } catch {
+              /* 删不掉的（多半是正在运行的 exe）留着，后面覆盖写 */
+            }
+          }
+        } catch {
+          /* 连列目录都不行 */
+        }
+      }
+
+      if (movedAway) {
+        renameSync(stage1, dest)
+        rmSync(old1, { recursive: true, force: true })
+      } else {
+        /*
+         * 没法整体替换：把新文件逐个覆盖进去。
+         * 删不掉的老文件留在那儿 —— 覆盖写会把同名文件替换掉，
+         * 真正棘手的是「正在运行的 exe」本身，那一步会抛错。
+         */
+        copyTreeOverwrite(stage1, dest)
+        rmSync(stage1, { recursive: true, force: true })
+      }
+    } else {
+      mkdirSync(dirname(dest), { recursive: true })
+      renameSync(stage1, dest)
+    }
 
 
     // ---- 快捷方式 ----
