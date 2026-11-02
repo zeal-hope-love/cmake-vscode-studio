@@ -42,7 +42,7 @@ import {
   type FileStepResult
 } from './vt13/portRunner'
 import { findCubeMx, runCubeMxAndVerify } from './vt13/cubeMx'
-import { restoreAfterCubeMx } from './vt13/postCubeMxFix'
+import { checkAfterCubeMx } from './vt13/postCubeMxCheck'
 
 export interface PortStepProgress {
   /** 步骤 id，界面用它对上进度条 */
@@ -297,31 +297,28 @@ export async function runPortInstall(opts: PortOptions): Promise<PortResult> {
     return { ok: false, preflight: pf, steps, acceptance: [], snapshotId, errors, warnings }
   }
 
-  // ---- ④.5 CubeMX 生成后的补救 ----
+  // ---- ④.5 CubeMX 生成后的检查 ----
   //
-  // CubeMX 会重写生成的源文件，把用户手改的东西（比如 CDC_Receive_FS
-  // 的 static）恢复成原样，直接导致构建失败。这里重新打一次补丁。
-  // 放在屏蔽 IRQ 之前 —— 两者都改 .c 文件，顺序固定更好排查。
+  // CubeMX 会重写生成的源文件。CDC_Receive_FS 那个 static 冲突的正确
+  // 解法是**业务代码不调它**（改用 USBD_CDC_SetRxBuffer / ReceivePacket），
+  // 这样 CubeMX 怎么生成都不影响。这里只做检查：如果工程还是老写法，
+  // 提醒一下，不自动改业务代码（风险比改生成文件大）。
   if (!opts.skipCubeMx && cubeMxOk) {
-    emit({ id: 'postfix', label: '修复 CubeMX 覆盖掉的改动', status: 'running' })
-    const fix = restoreAfterCubeMx(root)
+    emit({ id: 'postfix', label: '检查 CubeMX 生成结果', status: 'running' })
+    const chk = checkAfterCubeMx(root)
     emit({
       id: 'postfix',
-      label: '修复 CubeMX 覆盖掉的改动',
-      status: fix.errors.length ? 'warn' : fix.changed.length ? 'ok' : 'skip',
-      detail: fix.errors.length
-        ? fix.errors.join('；')
-        : fix.changed.length
-          ? fix.changed.join('；')
-          : fix.unchanged.slice(0, 2).join('；')
+      label: '检查 CubeMX 生成结果',
+      status: chk.problems.length ? 'warn' : 'ok',
+      detail: chk.problems.length ? chk.problems.join('；') : chk.notes.join('；')
     })
-    if (fix.errors.length) warnings.push(...fix.errors)
+    if (chk.problems.length) warnings.push(...chk.problems)
   } else {
     emit({
       id: 'postfix',
-      label: '修复 CubeMX 覆盖掉的改动',
+      label: '检查 CubeMX 生成结果',
       status: 'skip',
-      detail: opts.skipCubeMx ? '演示模式，没调 CubeMX，无需修复' : 'CubeMX 未成功，无需修复'
+      detail: opts.skipCubeMx ? '演示模式，没调 CubeMX' : 'CubeMX 未成功，跳过'
     })
   }
 
