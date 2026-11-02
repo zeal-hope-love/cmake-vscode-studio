@@ -23,11 +23,12 @@
  */
 
 import { app, BrowserWindow, dialog, ipcMain, shell, Menu } from 'electron'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -61,13 +62,30 @@ interface Meta {
   executableName: string
 }
 function readMeta(): Meta {
-  try {
-    const p = join(app.getAppPath(), 'meta.json')
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    return require(p) as Meta
-  } catch {
-    return { version: '0.0.0', productName: 'CV Studio', executableName: 'CV Studio.exe' }
+  /*
+   * `app.getAppPath()` 是 asar 的**根**，而我们的文件在 `app/` 子目录下
+   * （electron-builder 把整个项目目录打进去）。
+   *
+   * 早先这里写成 `join(getAppPath(), 'meta.json')` —— 少了一层 `app/`，
+   * require 抛异常、被 catch 吞掉，于是版本号永远显示 v0.0.0。
+   *
+   * 两个候选路径都试，兼容「打包」和「开发时直接跑」两种情况。
+   */
+  const candidates = [
+    join(app.getAppPath(), 'app', 'meta.json'),
+    join(app.getAppPath(), 'meta.json')
+  ]
+  for (const p of candidates) {
+    try {
+      // 用 readFileSync 而不是 require：require 会缓存，且对 asar 内的
+      // JSON 支持不稳定（不同 Electron 版本行为不同）
+      return JSON.parse(readFileSync(p, 'utf8')) as Meta
+    } catch {
+      /* 试下一个 */
+    }
   }
+  console.error('[installer] 读不到 meta.json，用过时默认值')
+  return { version: '0.0.0', productName: 'CV Studio', executableName: 'CV Studio.exe' }
 }
 
 const meta = readMeta()
@@ -582,9 +600,30 @@ ipcMain.handle('installer:install', async (_e, opts: InstallOptions) => {
   }
 })
 
-ipcMain.handle('installer:launch', (_e, exe: string) => {
-  shell.openPath(exe)
-  app.quit()
+ipcMain.handle('installer:launch', async (_e, exe: string) => {
+  /*
+   * 用 spawn 直接起进程，不用 shell.openPath。
+   *
+   * 踩过：`shell.openPath(exe)` 后面紧跟 `app.quit()` —— openPath 是异步的，
+   * 安装器进程先退出了，子进程还没来得及真正启动，表现就是「点立即运行没反应」。
+   *
+   * 用 `spawn(detached, unref)` 让新进程完全独立于安装器：
+   * 安装器退出不会带走它。
+   */
+  try {
+    const child = spawn(exe, [], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false
+    })
+    child.unref()
+  } catch (err) {
+    // 直接启动失败时退回 openPath（它会走系统默认关联）
+    console.error('[installer] spawn 失败，改用 shell.openPath：', err)
+    await shell.openPath(exe)
+  }
+  // 给新进程一点启动时间，再关掉安装器
+  setTimeout(() => app.quit(), 800)
 })
 ipcMain.handle('installer:quit', () => app.quit())
 
