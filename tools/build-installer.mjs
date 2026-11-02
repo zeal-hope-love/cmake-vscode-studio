@@ -83,6 +83,8 @@ cpSync(join(root, 'installer/src/renderer'), join(staging, 'app', 'renderer'), {
   recursive: true
 })
 copyFileSync(join(root, 'resources/icon.png'), join(staging, 'app', 'icon.png'))
+// 界面里 <img src="icon.png"> 要相对于 index.html 找，所以也放一份到 renderer/
+copyFileSync(join(root, 'resources/icon.png'), join(staging, 'app', 'renderer', 'icon.png'))
 
 writeFileSync(
   join(staging, 'app', 'meta.json'),
