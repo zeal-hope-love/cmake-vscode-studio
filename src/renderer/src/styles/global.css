@@ -1808,3 +1808,18 @@ html[data-theme='light'] .log {
   text-align: left;
   word-break: break-all;
 }
+
+/* ---------------------------------------------------------------------------
+   不确定进度条的滑动动画
+
+   下载时服务端没给 Content-Length 的情况（GitHub CDN 偶尔会这样），
+   这时候没法显示百分比 —— 用一条来回滑的条纹表示「还在动」，比空着强。
+   --------------------------------------------------------------------------- */
+@keyframes cv-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}

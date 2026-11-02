@@ -109,6 +109,7 @@ import {
 import { currentUserDataDir, userDataPath } from './services/store'
 import { ProcessRunner } from './services/runner'
 import { checkForUpdate } from './services/updateChecker'
+import { cancelDownload, downloadInstaller, runInstaller } from './services/updateDownloader'
 import { applyProjectRename, planProjectRename } from './services/projectRename'
 
 const runner = new ProcessRunner()
@@ -593,6 +594,32 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       throw new Error('只允许打开 http(s) 链接')
     }
     await shell.openExternal(url)
+  })
+
+  // ---- 应用内下载更新包 ---------------------------------------------------
+  ipcMain.handle(
+    IPC.downloadUpdate,
+    async (e, url: string, fileName: string) => {
+      /*
+       * 只允许从 GitHub 下载 —— 这个接口接受渲染进程传进来的任意 URL，
+       * 不限制的话等于给了「让主进程去下载任意文件」的能力。
+       */
+      if (!/^https:\/\/(api\.)?github\.com\//i.test(url) &&
+          !/^https:\/\/objects\.githubusercontent\.com\//i.test(url)) {
+        throw new Error('只允许从 GitHub 下载更新包')
+      }
+      return downloadInstaller(url, fileName, (p) => {
+        if (!e.sender.isDestroyed()) e.sender.send(IPC.updateDownloadProgress, p)
+      })
+    }
+  )
+
+  ipcMain.handle(IPC.cancelUpdateDownload, async () => {
+    cancelDownload()
+  })
+
+  ipcMain.handle(IPC.runUpdateInstaller, async (_e, filePath: string) => {
+    return runInstaller(filePath)
   })
 
   // ---- 模板 -------------------------------------------------------------

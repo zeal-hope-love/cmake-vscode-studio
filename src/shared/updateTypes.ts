@@ -48,3 +48,14 @@ export interface UpdateInfo {
   /** 这次结果是缓存来的（6 小时内查过） */
   cached?: boolean
 }
+/** 下载进度（主进程 → 渲染进程，约每 200ms 一次） */
+export interface DownloadProgress {
+  /** 已下载字节 */
+  received: number
+  /** 总字节；服务端没给 Content-Length 时是 0 */
+  total: number
+  /** 百分比 0-100；total 为 0 时是 -1（表示未知，界面用不确定进度条） */
+  percent: number
+  /** 估算速度（字节/秒） */
+  speed: number
+}

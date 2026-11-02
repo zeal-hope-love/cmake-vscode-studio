@@ -17,7 +17,7 @@
 import React from 'react'
 import { Button, Card, Spinner } from './ui'
 import { Icons } from './icons'
-import type { UpdateInfo } from '@shared/updateTypes'
+import type { DownloadProgress, UpdateInfo } from '@shared/updateTypes'
 
 /** 把 1024 字节换算成 M */
 function fmtSize(bytes: number): string {
@@ -67,6 +67,56 @@ export function UpdateNotice({
   const open = (url: string): void => {
     if (url) void window.api.openExternal(url)
   }
+
+  /*
+   * 应用内下载。
+   *
+   * 状态机：idle → downloading → done → (启动安装器)
+   *                  ↘ failed
+   *
+   * 为什么不在渲染进程自己 fetch：那样拿不到「写到哪了」、
+   * 也没法启动安装器。下载放主进程，进度用 IPC 推回来。
+   */
+  const [dl, setDl] = React.useState<DownloadProgress | null>(null)
+  const [downloading, setDownloading] = React.useState(false)
+  const [downloadedPath, setDownloadedPath] = React.useState<string | null>(null)
+  const [dlError, setDlError] = React.useState<string | null>(null)
+
+  // 订阅进度（组件挂载时订，卸载时退）
+  React.useEffect(() => {
+    return window.api.onUpdateDownloadProgress((p) => setDl(p))
+  }, [])
+
+  const startDownload = async (asset: { url: string; name: string }): Promise<void> => {
+    setDownloading(true)
+    setDlError(null)
+    setDownloadedPath(null)
+    setDl({ received: 0, total: 0, percent: -1, speed: 0 })
+    try {
+      const r = await window.api.downloadUpdate(asset.url, asset.name)
+      if (r.ok && r.path) {
+        setDownloadedPath(r.path)
+      } else if (r.cancelled) {
+        // 用户取消：静默回 idle
+      } else {
+        setDlError(r.error ?? '下载失败')
+      }
+    } catch (err) {
+      setDlError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDownloading(false)
+      setDl(null)
+    }
+  }
+
+  const runInstaller = async (): Promise<void> => {
+    if (!downloadedPath) return
+    const r = await window.api.runUpdateInstaller(downloadedPath)
+    if (!r.ok) setDlError(r.error ?? '启动安装程序失败')
+  }
+
+  /** 字节数转可读 */
+  const mb = (n: number): string => (n / 1024 / 1024).toFixed(1)
 
   // ---- 横幅：只在有更新时出现 ----
   if (compact) {
@@ -175,36 +225,147 @@ export function UpdateNotice({
             )}
           </div>
 
-          {/* 下载按钮：按文件名猜用途，用户一眼知道该下哪个 */}
-          <div className="row" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
-            {info.assets.map((a) => {
-              const isSetup = /setup/i.test(a.name)
-              const isPortable = /portable/i.test(a.name)
-              const label = isSetup ? '下载安装器' : isPortable ? '下载免安装版' : '下载安装包'
-              return (
-                <Button
-                  key={a.name}
-                  size="sm"
-                  variant={isSetup ? 'primary' : undefined}
-                  onClick={() => open(a.url)}
-                  title={a.name}
-                >
-                  {label}
-                  {a.size > 0 && <span className="faint"> {fmtSize(a.size)}</span>}
+          {/* ---- 下载区 ---- */}
+          {!downloading && !downloadedPath && (
+            <div className="row" style={{ marginBottom: 12, flexWrap: 'wrap', gap: 8 }}>
+              {info.assets.map((a) => {
+                const isSetup = /setup/i.test(a.name)
+                const isPortable = /portable/i.test(a.name)
+                const label = isSetup ? '下载并安装' : isPortable ? '下载免安装版' : '下载安装包'
+                return (
+                  <Button
+                    key={a.name}
+                    size="sm"
+                    variant={isSetup ? 'primary' : undefined}
+                    onClick={() => void startDownload(a)}
+                    title={a.name}
+                  >
+                    {label}
+                    {a.size > 0 && <span className="faint"> {fmtSize(a.size)}</span>}
+                  </Button>
+                )
+              })}
+              {info.releaseUrl && (
+                <Button size="sm" variant="ghost" onClick={() => open(info.releaseUrl)}>
+                  在浏览器中打开
                 </Button>
-              )
-            })}
-            {info.assets.length === 0 && info.releaseUrl && (
-              <Button size="sm" variant="primary" onClick={() => open(info.releaseUrl)}>
-                打开下载页
-              </Button>
-            )}
-            {info.releaseUrl && (
-              <Button size="sm" variant="ghost" onClick={() => open(info.releaseUrl)}>
-                查看发布说明
-              </Button>
-            )}
-          </div>
+              )}
+            </div>
+          )}
+
+          {/* ---- 下载中：真实进度 ---- */}
+          {downloading && (
+            <div style={{ marginBottom: 12 }}>
+              <div
+                className="row"
+                style={{ justifyContent: 'space-between', marginBottom: 6 }}
+              >
+                <span className="small">
+                  正在下载
+                  {dl && dl.total > 0 && (
+                    <span className="faint">
+                      {' '}
+                      {mb(dl.received)} / {mb(dl.total)} MB
+                    </span>
+                  )}
+                  {dl && dl.total === 0 && dl.received > 0 && (
+                    <span className="faint"> {mb(dl.received)} MB</span>
+                  )}
+                  {dl && dl.speed > 0 && (
+                    <span className="faint"> · {mb(dl.speed)} MB/s</span>
+                  )}
+                </span>
+                <span className="row" style={{ gap: 8 }}>
+                  <span className="faint small">
+                    {dl && dl.percent >= 0 ? `${dl.percent}%` : '…'}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void window.api.cancelUpdateDownload()}
+                  >
+                    取消
+                  </Button>
+                </span>
+              </div>
+              {/* 进度条：知道总大小时按百分比走，不知道时用不确定动画 */}
+              <div
+                style={{
+                  height: 6,
+                  borderRadius: 99,
+                  background: 'var(--bg-sunken)',
+                  overflow: 'hidden'
+                }}
+              >
+                <div
+                  style={{
+                    height: '100%',
+                    borderRadius: 99,
+                    background: 'var(--accent)',
+                    transition: 'width 0.2s linear',
+                    width:
+                      dl && dl.percent >= 0 ? `${dl.percent}%` : dl ? '35%' : '0%',
+                    ...(dl && dl.percent < 0
+                      ? { animation: 'cv-progress-slide 1.2s ease-in-out infinite' }
+                      : {})
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ---- 下载完成：启动安装 ---- */}
+          {downloadedPath && (
+            <div
+              style={{
+                marginBottom: 12,
+                padding: 10,
+                borderRadius: 6,
+                background: 'var(--bg-sunken)'
+              }}
+            >
+              <div className="small" style={{ marginBottom: 8 }}>
+                ✓ 下载完成
+              </div>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <Button size="sm" variant="primary" onClick={() => void runInstaller()}>
+                  立即安装
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    const dir = downloadedPath.replace(/[\\/][^\\/]+$/, '')
+                    void window.api.openExternal('file:///' + dir.replace(/\\/g, '/'))
+                  }}
+                >
+                  打开所在文件夹
+                </Button>
+                <span className="faint small">
+                  安装时如果提示「未知发布者」，点「仍要运行」即可（未购买代码签名证书）
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* ---- 下载失败 ---- */}
+          {dlError && (
+            <div className="small" style={{ marginBottom: 12, color: 'var(--err)' }}>
+              下载失败：{dlError}
+            </div>
+          )}
+
+          {info.releaseUrl && !downloading && (
+            <div style={{ marginBottom: 8 }}>
+              <button
+                type="button"
+                className="linkbtn"
+                onClick={() => open(info.releaseUrl)}
+              >
+                在浏览器里查看发布页
+              </button>
+            </div>
+          )}
 
           {/*
             发布说明：Markdown 原文。

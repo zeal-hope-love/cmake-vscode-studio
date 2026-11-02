@@ -822,6 +822,14 @@ export const IPC = {
   checkUpdate: 'app:checkUpdate',
   /** 打开 Release 页面 / 下载指定附件 */
   openExternal: 'app:openExternal',
+  /** 应用内下载安装包 */
+  downloadUpdate: 'app:downloadUpdate',
+  /** 下载进度推送 */
+  updateDownloadProgress: 'app:updateDownloadProgress',
+  /** 取消下载 */
+  cancelUpdateDownload: 'app:cancelUpdateDownload',
+  /** 启动下载好的安装包 */
+  runUpdateInstaller: 'app:runUpdateInstaller',
 
   templateList: 'template:list',
   templateSave: 'template:save',
@@ -942,6 +950,22 @@ export interface StudioApi {
   checkUpdate(force?: boolean): Promise<import('./updateTypes').UpdateInfo>
   /** 用系统浏览器打开 URL（Release 页面、下载链接） */
   openExternal(url: string): Promise<void>
+
+  /** 在应用内下载更新包，返回下载好的文件路径 */
+  downloadUpdate(url: string, fileName: string): Promise<{
+    ok: boolean
+    path?: string
+    error?: string
+    cancelled?: boolean
+  }>
+  /** 订阅下载进度。返回取消订阅函数 */
+  onUpdateDownloadProgress(
+    handler: (p: import('./updateTypes').DownloadProgress) => void
+  ): () => void
+  /** 取消进行中的下载 */
+  cancelUpdateDownload(): Promise<void>
+  /** 启动下载好的安装包 */
+  runUpdateInstaller(path: string): Promise<{ ok: boolean; error?: string }>
 
   /** 执行移植流水线（先存快照） */
   packPortInstall(options: { packId: string; projectRoot: string; skipCubeMx?: boolean }): Promise<import('./packTypes').PackPortResult>

@@ -134,6 +134,21 @@ const api: StudioApi = {
   checkUpdate: (force?: boolean) =>
     ipcRenderer.invoke(IPC.checkUpdate, force) as Promise<import('@shared/updateTypes').UpdateInfo>,
   openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url) as Promise<void>,
+  downloadUpdate: (url: string, fileName: string) =>
+    ipcRenderer.invoke(IPC.downloadUpdate, url, fileName) as Promise<{
+      ok: boolean
+      path?: string
+      error?: string
+      cancelled?: boolean
+    }>,
+  onUpdateDownloadProgress: (handler) =>
+    subscribe<import('@shared/updateTypes').DownloadProgress>(
+      IPC.updateDownloadProgress,
+      handler
+    ),
+  cancelUpdateDownload: () => ipcRenderer.invoke(IPC.cancelUpdateDownload) as Promise<void>,
+  runUpdateInstaller: (path: string) =>
+    ipcRenderer.invoke(IPC.runUpdateInstaller, path) as Promise<{ ok: boolean; error?: string }>,
 
   cmakeTrashFiles: (projectRoot, relPaths) =>
     ipcRenderer.invoke(IPC.cmakeTrashFiles, projectRoot, relPaths) as Promise<{
