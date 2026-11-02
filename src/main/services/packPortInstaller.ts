@@ -42,6 +42,7 @@ import {
   type FileStepResult
 } from './vt13/portRunner'
 import { findCubeMx, runCubeMxAndVerify } from './vt13/cubeMx'
+import { restoreAfterCubeMx } from './vt13/postCubeMxFix'
 
 export interface PortStepProgress {
   /** 步骤 id，界面用它对上进度条 */
@@ -156,6 +157,8 @@ function snapshotAll(root: string, entries: SnapshotEntry[]): string | null {
  */
 export async function runPortInstall(opts: PortOptions): Promise<PortResult> {
   const { root, pack, onProgress, isCancelled } = opts
+  /** CubeMX 是否成功生成过（决定要不要跑生成后补救） */
+  let cubeMxOk = false
   const steps: PortStepProgress[] = []
   const errors: string[] = []
   const warnings: string[] = []
@@ -247,6 +250,8 @@ export async function runPortInstall(opts: PortOptions): Promise<PortResult> {
   // ---- ④ CubeMX ----
   if (pf.iocPath && !opts.skipCubeMx && !errors.length) {
     emit({ id: 'cubemx', label: 'CubeMX 重新生成', status: 'running' })
+    /** CubeMX 是否真的跑成功了 —— 后面决定要不要打补丁 */
+    cubeMxOk = false
     const cubeMx = findCubeMx()
     if (!cubeMx) {
       warnings.push('没找到 STM32CubeMX，已跳过重新生成')
@@ -262,6 +267,7 @@ export async function runPortInstall(opts: PortOptions): Promise<PortResult> {
           onProgress?.({ id: 'cubemx', label: 'CubeMX 重新生成', status: 'running', detail: line })
         }
       })
+      cubeMxOk = res.ok
       if (!res.ok) {
         errors.push(`CubeMX 生成失败：${res.error ?? '未知原因'}`)
         emit({ id: 'cubemx', label: 'CubeMX 重新生成', status: 'err', detail: res.error })
@@ -283,6 +289,39 @@ export async function runPortInstall(opts: PortOptions): Promise<PortResult> {
       label: 'CubeMX 重新生成',
       status: 'skip',
       detail: opts.skipCubeMx ? '演示模式，已跳过' : '前置步骤未通过'
+    })
+  }
+
+  if (isCancelled?.()) {
+    emit({ id: 'cancelled', label: '已取消', status: 'skip', detail: '可用快照还原' })
+    return { ok: false, preflight: pf, steps, acceptance: [], snapshotId, errors, warnings }
+  }
+
+  // ---- ④.5 CubeMX 生成后的补救 ----
+  //
+  // CubeMX 会重写生成的源文件，把用户手改的东西（比如 CDC_Receive_FS
+  // 的 static）恢复成原样，直接导致构建失败。这里重新打一次补丁。
+  // 放在屏蔽 IRQ 之前 —— 两者都改 .c 文件，顺序固定更好排查。
+  if (!opts.skipCubeMx && cubeMxOk) {
+    emit({ id: 'postfix', label: '修复 CubeMX 覆盖掉的改动', status: 'running' })
+    const fix = restoreAfterCubeMx(root)
+    emit({
+      id: 'postfix',
+      label: '修复 CubeMX 覆盖掉的改动',
+      status: fix.errors.length ? 'warn' : fix.changed.length ? 'ok' : 'skip',
+      detail: fix.errors.length
+        ? fix.errors.join('；')
+        : fix.changed.length
+          ? fix.changed.join('；')
+          : fix.unchanged.slice(0, 2).join('；')
+    })
+    if (fix.errors.length) warnings.push(...fix.errors)
+  } else {
+    emit({
+      id: 'postfix',
+      label: '修复 CubeMX 覆盖掉的改动',
+      status: 'skip',
+      detail: opts.skipCubeMx ? '演示模式，没调 CubeMX，无需修复' : 'CubeMX 未成功，无需修复'
     })
   }
 
