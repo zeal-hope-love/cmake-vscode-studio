@@ -2,24 +2,27 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <title>安装 CV Studio</title>
+    <title>CV Studio 安装程序</title>
     <style>
       /* ---------------------------------------------------------------------
-         安装界面样式。
-         
-         用 Chromium 渲染，所以字体、圆角、渐变、阴影都是高清的 ——
-         这正是替换 NSIS 的理由（那个是点阵化的 Win32 对话框）。
+         风格对齐 DeepSeek Harness / Windows 11 原生安装器：
+         浅色底、克制配色、大留白、圆角控件、单一强调色。
+         不做花哨渐变和深色主题 —— 安装器就该看起来像个系统组件。
          --------------------------------------------------------------------- */
       :root {
-        --bg: #0d1117;
-        --bg-raised: #161b22;
-        --border: #30363d;
-        --fg: #e6edf3;
-        --fg-muted: #8b949e;
-        --accent: #4f8ef7;
-        --accent-2: #7c5cff;
-        --ok: #3fb950;
-        --err: #f85149;
+        --bg: #f3f3f3;
+        --card: #ffffff;
+        --border: #e5e5e5;
+        --border-strong: #d4d4d4;
+        --fg: #1a1a1a;
+        --fg-muted: #6b6b6b;
+        --fg-faint: #9a9a9a;
+        --accent: #4a7dff;
+        --accent-hover: #3a6ae8;
+        --accent-soft: #eef3ff;
+        --ok: #16a34a;
+        --err: #dc2626;
+        --radius: 8px;
       }
 
       * {
@@ -33,55 +36,98 @@
         overflow: hidden;
         background: var(--bg);
         color: var(--fg);
-        font-family:
-          'Segoe UI Variable Display', 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC',
-          system-ui, sans-serif;
+        font-family: 'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', system-ui,
+          sans-serif;
         font-size: 14px;
-        /* 全局抗锯齿，字看起来更细更清晰 */
         -webkit-font-smoothing: antialiased;
         text-rendering: optimizeLegibility;
         user-select: none;
+        /*
+         * 中日韩字形优先用系统 UI 字体，避免某些字落到衬线体上。
+         */
+        font-variant-ligatures: none;
       }
 
       #app {
         display: flex;
         flex-direction: column;
         height: 100%;
+        padding: 24px 28px 0;
+        /* 无边框窗口要自己声明可拖动区，否则窗口拖不动 */
+        -webkit-app-region: drag;
       }
 
-      /* ---- 顶部品牌区 ---- */
-      .hero {
-        display: flex;
-        align-items: center;
-        gap: 16px;
-        padding: 22px 28px 18px;
-        border-bottom: 1px solid var(--border);
-        background: linear-gradient(135deg, rgba(79, 142, 247, 0.14), rgba(124, 92, 255, 0.08));
+      /* 交互控件必须排除掉，否则点不动 */
+      button,
+      input,
+      label,
+      .body {
+        -webkit-app-region: no-drag;
       }
 
-      /* 图标用 SVG 直接画，不用位图 —— 任何 DPI 下都清晰 */
-      .logo {
-        width: 56px;
-        height: 56px;
-        flex: 0 0 auto;
-        border-radius: 14px;
-        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      /* ---- 右上角窗口按钮 ---- */
+      .winbtn {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: 46px;
+        height: 34px;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        color: #6b6b6b;
+        font-size: 14px;
+        line-height: 1;
+        cursor: pointer;
+        -webkit-app-region: no-drag;
         display: flex;
         align-items: center;
         justify-content: center;
-        box-shadow: 0 6px 18px rgba(79, 142, 247, 0.32);
+        padding: 0;
+        transition: background 0.12s ease;
+        z-index: 10;
       }
 
-      .hero h1 {
+      .winbtn:hover {
+        background: #e81123;
+        color: #fff !important;
+        border: 0;
+      }
+
+      .winbtn.close {
+        border: 0;
+      }
+
+      /* ---- 头部：图标 + 名称 + 版本 ---- */
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex: 0 0 auto;
+      }
+
+      .logo {
+        width: 48px;
+        height: 48px;
+        flex: 0 0 auto;
+        border-radius: 10px;
+        background: linear-gradient(140deg, #5b8def, #6f5cf0);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 8px rgba(91, 141, 239, 0.28);
+      }
+
+      .header h1 {
         margin: 0;
-        font-size: 20px;
+        font-size: 18px;
         font-weight: 600;
-        letter-spacing: 0.2px;
+        letter-spacing: -0.01em;
       }
 
-      .hero p {
-        margin: 5px 0 0;
-        font-size: 13px;
+      .header .sub {
+        margin: 3px 0 0;
+        font-size: 12.5px;
         color: var(--fg-muted);
       }
 
@@ -89,97 +135,111 @@
         margin-left: auto;
         font-size: 12px;
         color: var(--fg-muted);
+        background: var(--card);
         border: 1px solid var(--border);
         border-radius: 20px;
         padding: 3px 12px;
       }
 
-      /* ---- 主体 ---- */
+      .divider {
+        height: 1px;
+        background: var(--border);
+        margin: 20px 0 0;
+        flex: 0 0 auto;
+      }
+
+      /* ---- 内容区 ---- */
       .body {
         flex: 1;
         min-height: 0;
         overflow-y: auto;
-        padding: 22px 28px;
+        padding: 22px 0;
       }
 
-      .step {
-        margin-bottom: 20px;
+      .field {
+        margin-bottom: 22px;
       }
 
-      .step__label {
-        font-size: 12px;
+      .field__label {
+        font-size: 12.5px;
         color: var(--fg-muted);
         margin-bottom: 8px;
-        display: flex;
-        align-items: center;
-        gap: 6px;
       }
 
       .row {
         display: flex;
-        gap: 10px;
-        align-items: center;
+        gap: 8px;
+        align-items: stretch;
       }
 
       input[type='text'] {
         flex: 1;
         min-width: 0;
-        height: 38px;
+        height: 36px;
         padding: 0 12px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        background: var(--bg-raised);
+        border-radius: var(--radius);
+        border: 1px solid var(--border-strong);
+        background: var(--card);
         color: var(--fg);
         font-size: 13px;
         font-family: inherit;
         user-select: text;
+        transition:
+          border-color 0.15s ease,
+          box-shadow 0.15s ease;
       }
 
       input[type='text']:focus {
         outline: none;
         border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(79, 142, 247, 0.18);
+        box-shadow: 0 0 0 3px rgba(74, 125, 255, 0.14);
       }
 
       button {
-        height: 38px;
+        height: 36px;
         padding: 0 18px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        background: var(--bg-raised);
+        border-radius: var(--radius);
+        border: 1px solid var(--border-strong);
+        background: var(--card);
         color: var(--fg);
         font-size: 13px;
         font-family: inherit;
         cursor: pointer;
-        transition: all 0.16s ease;
+        transition: all 0.15s ease;
         white-space: nowrap;
       }
 
       button:hover:not(:disabled) {
-        border-color: #484f58;
-        background: #1c2128;
+        background: #fafafa;
+        border-color: #c4c4c4;
+      }
+
+      button:active:not(:disabled) {
+        background: #f0f0f0;
       }
 
       button.primary {
-        background: linear-gradient(135deg, var(--accent), var(--accent-2));
-        border-color: transparent;
-        font-weight: 600;
-        box-shadow: 0 4px 14px rgba(79, 142, 247, 0.28);
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+        font-weight: 500;
       }
 
       button.primary:hover:not(:disabled) {
-        filter: brightness(1.08);
+        background: var(--accent-hover);
+        border-color: var(--accent-hover);
       }
 
       button:disabled {
-        opacity: 0.45;
-        cursor: not-allowed;
+        opacity: 0.42;
+        cursor: default;
       }
 
+      /* ---- 复选框 ---- */
       .checks {
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 11px;
       }
 
       label.check {
@@ -188,206 +248,233 @@
         gap: 9px;
         cursor: pointer;
         font-size: 13px;
-        color: var(--fg);
       }
 
       label.check input {
-        width: 16px;
-        height: 16px;
+        width: 17px;
+        height: 17px;
         accent-color: var(--accent);
         cursor: pointer;
+        margin: 0;
       }
 
-      /* ---- 进度区 ---- */
+      /* ---- 进度 ---- */
       .progress-wrap {
         display: none;
+        padding-top: 4px;
       }
 
       .progress-wrap.on {
         display: block;
       }
 
+      .progress-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 10px;
+      }
+
+      .progress-head .stage {
+        font-size: 13.5px;
+        font-weight: 500;
+      }
+
+      .progress-head .pct {
+        font-size: 12.5px;
+        color: var(--fg-muted);
+        font-variant-numeric: tabular-nums;
+      }
+
       .bar {
-        height: 8px;
+        height: 6px;
         border-radius: 99px;
-        background: #21262d;
+        background: #e4e4e4;
         overflow: hidden;
-        margin: 10px 0;
       }
 
       .bar__fill {
         height: 100%;
         width: 0;
         border-radius: 99px;
-        background: linear-gradient(90deg, var(--accent), var(--accent-2));
-        transition: width 0.15s linear;
+        background: var(--accent);
+        transition: width 0.18s linear;
       }
 
-      /* 不确定进度时的流动条纹（清理旧版本那种瞬间阶段） */
       .bar__fill.indet {
-        width: 35% !important;
-        animation: slide 1.1s ease-in-out infinite;
+        width: 32% !important;
+        animation: slide 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
       }
 
       @keyframes slide {
         0% {
-          transform: translateX(-100%);
+          transform: translateX(-110%);
         }
         100% {
-          transform: translateX(360%);
+          transform: translateX(350%);
         }
       }
 
-      .progress-info {
+      .progress-meta {
         display: flex;
         justify-content: space-between;
+        margin-top: 9px;
         font-size: 12px;
-        color: var(--fg-muted);
+        color: var(--fg-faint);
+        font-variant-numeric: tabular-nums;
       }
 
       .current-file {
-        margin-top: 8px;
-        font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+        margin-top: 7px;
+        font-family: 'Cascadia Mono', Consolas, monospace;
         font-size: 11.5px;
-        color: #6e7681;
+        color: var(--fg-faint);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
         direction: rtl;
         text-align: left;
-        height: 16px;
+        min-height: 15px;
       }
 
-      /* ---- 完成 / 失败 ---- */
+      /* ---- 结果 ---- */
       .result {
         display: none;
         text-align: center;
-        padding: 26px 0 10px;
+        padding: 30px 20px 10px;
       }
 
       .result.on {
         display: block;
       }
 
-      .result__icon {
-        width: 60px;
-        height: 60px;
-        margin: 0 auto 16px;
+      .result .icon {
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 18px;
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 30px;
+        font-size: 26px;
+        font-weight: 600;
       }
 
-      .result__icon.ok {
-        background: rgba(63, 185, 80, 0.14);
+      .result .icon.ok {
+        background: #e8f7ee;
         color: var(--ok);
       }
 
-      .result__icon.err {
-        background: rgba(248, 81, 73, 0.14);
+      .result .icon.err {
+        background: #fdecec;
         color: var(--err);
       }
 
       .result h2 {
-        margin: 0 0 8px;
-        font-size: 17px;
+        margin: 0 0 10px;
+        font-size: 16px;
         font-weight: 600;
       }
 
-      .result p {
+      .result .detail {
         margin: 0;
-        font-size: 13px;
+        font-size: 12.5px;
         color: var(--fg-muted);
-        line-height: 1.7;
+        line-height: 1.75;
         word-break: break-all;
+        /* 错误信息可能带换行，保留 */
+        white-space: pre-wrap;
+        text-align: left;
+        max-width: 460px;
+        margin-left: auto;
+        margin-right: auto;
       }
 
-      /* ---- 底部按钮栏 ---- */
+      /* ---- 底部按钮 ---- */
       .footer {
         flex: 0 0 auto;
         display: flex;
         justify-content: flex-end;
         gap: 10px;
-        padding: 14px 28px;
+        padding: 16px 0 22px;
         border-top: 1px solid var(--border);
-        background: #0b0f14;
       }
     </style>
   </head>
   <body>
+    <button class="winbtn close" id="winclose" title="关闭">✕</button>
+
     <div id="app">
-      <div class="hero">
+      <div class="header">
         <div class="logo">
-          <!-- 白色几何 C，和应用图标一致；用 SVG 保证任何缩放下都清晰 -->
-          <svg width="30" height="30" viewBox="0 0 100 100">
+          <!-- 白色几何 C：外环挖掉内圆，用 evenodd 一次画完 -->
+          <svg width="26" height="26" viewBox="0 0 100 100" aria-hidden="true">
             <path
-              d="M 50 14 A 36 36 0 1 0 50 86 A 36 36 0 1 0 50 14 Z M 50 34 A 16 16 0 1 1 50 66 A 16 16 0 1 1 50 34 Z"
-              fill="#fff"
+              d="M 50 12 A 38 38 0 1 0 50 88 A 38 38 0 1 0 50 12 Z M 50 34 A 16 16 0 1 1 50 66 A 16 16 0 1 1 50 34 Z"
+              fill="#ffffff"
               fill-rule="evenodd"
             />
-            <rect x="50" y="42" width="46" height="16" fill="none" />
           </svg>
         </div>
         <div>
           <h1 id="title">CV Studio</h1>
-          <p>Windows 下的 STM32 / CMake 工程配置与调试文件生成器</p>
+          <p class="sub">STM32 / CMake 工程的配置与调试文件生成器</p>
         </div>
         <span class="ver" id="ver">v—</span>
       </div>
+      <div class="divider"></div>
 
       <div class="body">
-        <!-- 表单区 -->
+        <!-- 表单 -->
         <div id="form">
-          <div class="step">
-            <div class="step__label">安装位置</div>
+          <div class="field">
+            <div class="field__label">安装位置</div>
             <div class="row">
               <input type="text" id="dir" spellcheck="false" />
               <button id="pick">浏览…</button>
             </div>
           </div>
 
-          <div class="step">
-            <div class="step__label">快捷方式</div>
+          <div class="field">
+            <div class="field__label">快捷方式</div>
             <div class="checks">
               <label class="check">
                 <input type="checkbox" id="desktop" checked />
-                创建桌面快捷方式
+                在桌面创建快捷方式
               </label>
               <label class="check">
                 <input type="checkbox" id="startmenu" checked />
-                创建开始菜单快捷方式
+                在开始菜单创建快捷方式
               </label>
             </div>
           </div>
         </div>
 
-        <!-- 进度区 -->
+        <!-- 进度 -->
         <div class="progress-wrap" id="progress">
-          <div class="progress-info">
-            <span id="stage">准备中</span>
-            <span id="pct">0%</span>
+          <div class="progress-head">
+            <span class="stage" id="stage">准备中</span>
+            <span class="pct" id="pct">0%</span>
           </div>
           <div class="bar"><div class="bar__fill" id="fill"></div></div>
-          <div class="progress-info">
+          <div class="progress-meta">
             <span id="count"></span>
             <span id="bytes"></span>
           </div>
           <div class="current-file" id="current"></div>
         </div>
 
-        <!-- 结果区 -->
+        <!-- 结果 -->
         <div class="result" id="result">
-          <div class="result__icon ok" id="resIcon">✓</div>
+          <div class="icon ok" id="resIcon">✓</div>
           <h2 id="resTitle"></h2>
-          <p id="resText"></p>
+          <p class="detail" id="resText"></p>
         </div>
       </div>
 
       <div class="footer">
         <button id="cancel">取消</button>
-        <button id="action" class="primary">开始安装</button>
+        <button id="action" class="primary">安装</button>
       </div>
     </div>
 
@@ -395,49 +482,47 @@
       const $ = (id) => document.getElementById(id)
       const api = window.installer
 
-      let defaults = null
-      let state = 'idle' // idle | installing | done | failed
+      let state = 'idle'
       let installedExe = null
 
       function fmtBytes(n) {
+        if (!n) return ''
         if (n < 1024) return n + ' B'
-        if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB'
-        if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB'
-        return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB'
-      }
-
-      function setBar(percent, indeterminate) {
-        const fill = $('fill')
-        if (indeterminate) {
-          fill.classList.add('indet')
-        } else {
-          fill.classList.remove('indet')
-          fill.style.width = Math.min(100, Math.max(0, percent)) + '%'
-        }
+        if (n < 1048576) return (n / 1024).toFixed(0) + ' KB'
+        if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB'
+        return (n / 1073741824).toFixed(2) + ' GB'
       }
 
       api.onProgress((p) => {
         $('stage').textContent = p.stage
         $('pct').textContent = p.percent + '%'
-        setBar(p.percent, p.stage === '清理旧版本' || p.stage === '准备中')
-        if (p.total > 0) {
-          $('count').textContent = p.done + ' / ' + p.total + ' 个文件'
-          $('bytes').textContent = fmtBytes(p.bytesDone) + ' / ' + fmtBytes(p.bytesTotal)
-        }
-        if (p.current) $('current').textContent = p.current
+        const fill = $('fill')
+        const indet = p.stage === '准备中' || p.stage === '清理旧版本'
+        fill.classList.toggle('indet', indet)
+        if (!indet) fill.style.width = Math.min(100, Math.max(0, p.percent)) + '%'
+
+        $('count').textContent = p.total > 0 ? p.done + ' / ' + p.total + ' 个文件' : ''
+        $('bytes').textContent =
+          p.bytesTotal > 0 ? fmtBytes(p.bytesDone) + ' / ' + fmtBytes(p.bytesTotal) : ''
+        $('current').textContent = p.current || ''
       })
 
       async function init() {
-        defaults = await api.defaults()
-        $('title').textContent = defaults.productName
-        $('ver').textContent = 'v' + defaults.version
-        $('dir').value = defaults.dir
-        document.title = '安装 ' + defaults.productName
+        const d = await api.defaults()
+        $('title').textContent = d.productName
+        $('ver').textContent = 'v' + d.version
+        $('dir').value = d.dir
+        document.title = d.productName + ' 安装程序'
       }
 
       $('pick').addEventListener('click', async () => {
         const d = await api.pickDir()
         if (d) $('dir').value = d
+      })
+
+      $('winclose').addEventListener('click', () => {
+        if (state === 'installing') return
+        api.quit()
       })
 
       $('cancel').addEventListener('click', () => {
@@ -484,16 +569,15 @@
         if (r.ok) {
           state = 'done'
           installedExe = r.exe
-          $('resIcon').className = 'result__icon ok'
+          $('resIcon').className = 'icon ok'
           $('resIcon').textContent = '✓'
           $('resTitle').textContent = '安装完成'
-          $('resText').textContent =
-            '已安装到 ' + r.dir + '（用时 ' + r.seconds + ' 秒）'
+          $('resText').textContent = '已安装到：\n' + r.dir + '\n用时 ' + r.seconds + ' 秒'
           $('action').textContent = '立即运行'
           $('cancel').textContent = '关闭'
         } else {
           state = 'failed'
-          $('resIcon').className = 'result__icon err'
+          $('resIcon').className = 'icon err'
           $('resIcon').textContent = '✕'
           $('resTitle').textContent = '安装失败'
           $('resText').textContent = r.error || '未知错误'

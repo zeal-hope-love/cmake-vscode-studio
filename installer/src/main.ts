@@ -275,6 +275,9 @@ ipcMain.handle('installer:install', async (_e, opts: InstallOptions) => {
   if (!existsSync(src)) {
     return { ok: false, error: `安装包内容缺失：${src}` }
   }
+  if (!statSync(src).isDirectory()) {
+    return { ok: false, error: `安装包内容不是目录：${src}` }
+  }
 
   /** 每个文件复制完就推一次 —— 进度条按真实字节数走 */
   const send = (payload: {
@@ -295,8 +298,17 @@ ipcMain.handle('installer:install', async (_e, opts: InstallOptions) => {
     // 目标目录里如果有旧版本，先清掉 —— 否则残留的旧文件会让主程序加载到混合版本
     if (existsSync(dest)) {
       send({ stage: '清理旧版本', percent: 0, current: dest, done: 0, total: 0, bytesDone: 0, bytesTotal: 0 })
-      for (const name of readdirSync(dest)) {
-        rmSync(join(dest, name), { recursive: true, force: true })
+      /*
+       * 目标路径必须是目录。如果它是个同名文件（用户手滑，或者上一版装坏了），
+       * 直接 readdirSync 会抛 ENOTDIR —— 那就先删掉它。
+       */
+      const st = statSync(dest)
+      if (!st.isDirectory()) {
+        rmSync(dest, { force: true })
+      } else {
+        for (const name of readdirSync(dest)) {
+          rmSync(join(dest, name), { recursive: true, force: true })
+        }
       }
     }
     mkdirSync(dest, { recursive: true })
@@ -338,7 +350,13 @@ ipcMain.handle('installer:install', async (_e, opts: InstallOptions) => {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    return { ok: false, error: `安装失败：${msg}` }
+    const code = (err as NodeJS.ErrnoException).code ?? ''
+    // 把出错的位置也带上 —— 只说 ENOTDIR 谁都不知道是哪个路径
+    const where = (err as NodeJS.ErrnoException).path ?? ''
+    return {
+      ok: false,
+      error: `安装失败：${msg}${code ? `（${code}）` : ''}${where ? `\n路径：${where}` : ''}\n目标：${dest}`
+    }
   }
 })
 
@@ -352,20 +370,32 @@ ipcMain.handle('installer:quit', () => app.quit())
 
 function createWindow(): void {
   win = new BrowserWindow({
-    width: 760,
+    width: 620,
     height: 560,
     resizable: false,
     maximizable: false,
-    frame: true,
-    title: `安装 ${meta.productName}`,
-    backgroundColor: '#0d1117',
+    /*
+     * 无边框 + 自绘标题栏。
+     *
+     * 用系统标题栏的话，浅色界面顶上会多一条深色条，和下面的内容割裂；
+     * 而且窗口本身固定大小，系统那三个按钮也没什么用。
+     * 自绘之后整个窗口是一体的，也能贴一条细的边框阴影。
+     */
+    frame: false,
+    titleBarStyle: 'hidden',
+    title: `${meta.productName} 安装程序`,
+    backgroundColor: '#f3f3f3',
     icon: join(app.getAppPath(), 'icon.png'),
+    show: false,
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
     }
   })
+
+  // 等页面画完再显示，避免先闪一下白屏
+  win.once('ready-to-show', () => win?.show())
 
   Menu.setApplicationMenu(null)
   /*
