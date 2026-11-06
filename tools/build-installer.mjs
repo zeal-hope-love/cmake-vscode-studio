@@ -44,6 +44,30 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const staging = process.env.CVSTUDIO_STAGING
   ? resolve(root, process.env.CVSTUDIO_STAGING)
   : join(root, '.installer-build')
+
+/**
+ * 删目录时带重试。
+ *
+ * Windows 上删「刚写完的」目录会突然 EBUSY：杀软实时扫描、OneDrive 同步、
+ * 索引服务都可能在文件落盘后的几百毫秒里握着句柄。以前这里直接 rmSync，
+ * 打包流程就卡死在「裁完本体、马上要打安装器」这一步 —— 前功尽弃。
+ *
+ * 实测重试 4～5 次（总共约 1 秒）就够，扫完自然就松手了。
+ */
+function rmWithRetry(target, tries = 8) {
+  let wait = 80
+  for (let i = 0; ; i++) {
+    try {
+      rmSync(target, { recursive: true, force: true })
+      return
+    } catch (err) {
+      if (i >= tries - 1) throw err
+      // 同步等待：这里在流程中间，用 await 要把整条链都改成 async
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait)
+      wait = Math.min(wait * 2, 800)
+    }
+  }
+}
 /*
  * 应用本体目录（要被打进安装包的那份）。
  *
@@ -105,14 +129,29 @@ if (process.env.CVSTUDIO_SKIP_KERNEL_CHECK !== '1') {
 }
 
 step(`构建 ${pkg.productName} v${pkg.version} 应用本体`)
-if (!existsSync(join(unpacked, `${pkg.productName}.exe`))) {
+/*
+ * 复用的前提是它确实是「当前这版」打出来的。
+ *
+ * 只看 exe 在不在不够：改了版本号、重编了 out/ 之后，旧的 win-unpacked
+ * 会被悄悄复用，最后打出来的安装包内容对不上版本号 —— 而且没有任何提示。
+ * 所以拿 app.asar 的落盘时间跟 package.json / out 比一下，旧了就重打。
+ */
+const unpackedAsar = join(unpacked, 'resources', 'app.asar')
+const unpackedExe = join(unpacked, `${pkg.productName}.exe`)
+const outMain = join(root, 'out', 'main', 'index.js')
+const builtAt = existsSync(unpackedAsar) ? statSync(unpackedAsar).mtimeMs : 0
+const sourceAt = Math.max(
+  statSync(join(root, 'package.json')).mtimeMs,
+  existsSync(outMain) ? statSync(outMain).mtimeMs : 0
+)
+if (!existsSync(unpackedExe) || builtAt < sourceAt) {
   runBuilder(['--win', '--dir'], root)
 } else {
   console.log(`  复用已有的 ${unpacked}`)
 }
 
 step('清空暂存目录')
-rmSync(staging, { recursive: true, force: true })
+rmWithRetry(staging)
 mkdirSync(join(staging, 'app', 'payload'), { recursive: true })
 
 step('编译安装器主进程 / preload')
@@ -248,21 +287,19 @@ function trimPayload(srcDir, dstDir) {
   return { savedBytes, removed }
 }
 
-step('把应用本体裁完放进 payload/')
-const trimDir = join(staging, 'trimmed')
-const trim = trimPayload(unpacked, trimDir)
-console.log(`  裁掉 ${trim.removed.length} 个文件，省 ${(trim.savedBytes / 1024 / 1024).toFixed(1)} MB`)
-
-step('把裁剪后的内容放进 payload/（不压缩，启动快）')
+step('把应用本体裁完，直接铺进 payload/')
 /*
- * 直接把裁剪后的目录搬进 payload/。
+ * 以前是「先裁到 trimmed/，再整棵 cpSync 进 payload/，最后删掉 trimmed」。
+ * 那一步要多写 265 MB、再删一次 —— 而 Windows 上删「刚写完的大 asar」会 EBUSY
+ * （杀软实时扫描 / 同步盘握着句柄），重试好几秒也未必松手，打包就卡死在这儿，
+ * 前面全白干。现在直接裁到最终位置：少一次全量复制，也少一次删除。
  *
- * 试过压成 tar.gz（能省 30 MB），但安装时要先解压 265 MB，
+ * 试过压成 tar.gz（能省 30 MB），但安装时要先解压 265 MB 再跑，
  * 多花十几秒 —— 用户明确说「太占空间也没事」，那就走快的路子。
  */
-const trimmedDir = join(staging, 'trimmed')
-cpSync(trimmedDir, join(staging, 'app', 'payload'), { recursive: true })
-rmSync(trimmedDir, { recursive: true, force: true })
+const payloadDir = join(staging, 'app', 'payload')
+const trim = trimPayload(unpacked, payloadDir)
+console.log(`  裁掉 ${trim.removed.length} 个文件，省 ${(trim.savedBytes / 1024 / 1024).toFixed(1)} MB`)
 
 /*
  * 给安装器自己打一份 portable exe。
