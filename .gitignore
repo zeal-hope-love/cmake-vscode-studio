@@ -24,7 +24,9 @@ desktop.ini
 .pkg.log
 .pkg.err
 
-# 注意：.vscode/ 是故意提交的 —— 里面有本项目的调试配置（launch.json / tasks.json）
+# 已移除 .vscode/：团队统一用 IDEA，调试 / 打包配置在 .idea/runConfigurations/（已提交）。
+# 万一有人在本地又建出来，也不要再提交进仓库
+.vscode/
 
 # 打包/构建用的临时目录（esbuild 缓存等），不要提交
 .tmp/

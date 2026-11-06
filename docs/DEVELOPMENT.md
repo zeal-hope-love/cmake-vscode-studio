@@ -20,7 +20,7 @@ Electron 应用不是什么"另一种语言"，它就是 **Node.js + 一个 Chro
 
 | 用途 | 工具 | 状态 |
 | --- | --- | --- |
-| 编辑器 / IDE | VS Code | 已配好 `.vscode/`（调试配置 + 任务） |
+| 编辑器 / IDE | IntelliJ IDEA（JetBrains） | 调试 / 打包配置在 `.idea/runConfigurations/`（9 套，已提交） |
 | 构建 | `electron-vite`（内部是 Vite 7 + esbuild） | 已装 |
 | 类型检查 | `tsc` 5.9 | 已装 |
 | 界面框架 | React 19 | 已装 |
@@ -35,7 +35,7 @@ Electron 应用不是什么"另一种语言"，它就是 **Node.js + 一个 Chro
 
 | IDE | 适合写这个项目吗 | 说明 |
 | --- | --- | --- |
-| **VS Code** | ✅ 首选 | 生态一等公民；本项目 `.vscode/` 已配好，打开按 F5 就能调试 |
+| **VS Code** | ⚪ 可选 | 生态一等公民，但本仓库**已移除 `.vscode/`**（团队统一用 IDEA），要用的需自建 launch.json / tasks.json |
 | **WebStorm** | ✅ 也很好 | 对 React + TS 的重构、类型推导提示确实更强。**非商业用途免费**（JetBrains 2024-10 起），只在商业用途才要付费 |
 | IntelliJ IDEA Ultimate | ❌ 不划算 | Java/Kotlin 定位；Web 能力和 WebStorm 重叠但更重，为这个项目买它没意义 |
 | **CLion**（你已装） | ❌ 不能用 | C/C++ IDE，对 TS/JS 基本只有文本编辑：没有 TS 语言服务、没有 JSX。**它是用来调你的 STM32 工程的，不是写这个工具的** |
@@ -88,16 +88,19 @@ npm run format         # 格式化 src/ 和 tools/
 npm run format:check   # 只检查，不修改（CI 用）
 ```
 
-**VS Code**：`.vscode/settings.json` 里已经设成 Prettier 格式化 + 保存时自动格式化，装好推荐扩展就生效。
-
-**WebStorm**：
-1. Settings → Languages & Frameworks → JavaScript → **Prettier**，勾选 *Automatic Prettier configuration*（它会自动找到项目的 `.prettierrc.json` 和本地 prettier）
-2. 勾上 **Run on save**（保存时自动格式化）
+**IDEA / WebStorm**（本项目日常用的就是这套）：
+1. 项目自带 `.idea/prettier.xml`，Prettier 一般开箱就能用；没生效就去
+   Settings → Languages & Frameworks → JavaScript → **Prettier**，勾 *Automatic Prettier configuration*
+   （它会自动找到项目的 `.prettierrc.json` 和本地 prettier）
+2. 保存时自动格式化：Settings → Tools → **Actions on Save**，勾 *Run Prettier*
 3. 想去掉"整个文件都不符合格式"的波浪线提示：Settings → Editor → Inspections → 把 Prettier 的检查级别调低
+
+> 本仓库已移除 `.vscode/`（团队统一用 IDEA）。VS Code 用户想用格式化得自己配
+> `editor.defaultFormatter`，别指望仓库里有现成的。
 
 > 本项目已经全量跑过一次 `npm run format`，所以现在整个代码库都是 Prettier-clean 的 —— 你随便改哪个文件，保存时都只会有你自己的改动，不会突然冒出几百行格式差异。
 
-### 建议装的 VS Code 扩展
+### 可选：VS Code 扩展（团队不用，留作参考）
 
 ```
 dbaeumer.vscode-eslint          # 如果你后面加 ESLint
@@ -165,8 +168,8 @@ V8 Inspector 响应: { "Browser": "node.js/v24.21.0", "Protocol-Version": "1.1" 
 ```
 
 然后在 IDE 里附加：
-- **VS Code**：按 F5，选「调试主进程（attach 5858）」（配置在 `.vscode/launch.json`）
-- **WebStorm**：选「附加到主进程（5858）」（配置在 `.idea/runConfigurations/`）
+- **IDEA / WebStorm**：选「附加到主进程（5858）」（配置在 `.idea/runConfigurations/attach_main.xml`）
+- **VS Code**：仓库不再带 `.vscode/launch.json`，需要自己建一个 attach 5858 的配置
 
 现在你可以在 `src/main/services/generators.ts` 之类的文件里直接下断点，走到时源码是对得上的（靠 `--sourcemap`）。
 
@@ -207,7 +210,7 @@ node tools/run-ts.mjs tools/scan.ts <工程路径>
 
 ### 4. 打包后的 exe 怎么调试
 
-`.vscode` 里的配置只对源码有效。打包后的 exe：
+`.idea/runConfigurations/` 里的配置只对源码有效。打包后的 exe：
 
 - **界面**：按 F12 一样能开 DevTools（`installScreenshotHook` 之外，DevTools 快捷键是无条件注册的）
 - **无头自检**：本项目内置了截图钩子，可以确认某个 exe 到底能不能正常渲染：

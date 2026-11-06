@@ -1,65 +1,109 @@
 @echo off
-chcp 65001 >nul
 setlocal
+title CV Studio - cleanup build leftovers
 
 rem ===========================================================================
-rem  清理打包残留：release-203 / release-portable / win-unpacked 之类的空壳目录
+rem  Remove leftover build folders (release-20x, release-portable,
+rem  release\win-unpacked ...) that Explorer and cmd refuse to delete.
 rem
-rem  为什么要单独弄个脚本：
-rem    这些目录里的 app.asar 被文件监视/索引服务 mmap 住，普通删除会报
-rem    "Device or resource busy" 或 "另一个程序正在使用此文件"，连改名都不行。
-rem    脚本会先停掉 Windows 搜索索引，再删一轮；还删不掉就说明是别的监视器，
-rem    退出 WorkBuddy / VSCode 这类占着工作区的程序后再跑一次，或者重启后直接跑。
+rem  Why they cannot be deleted normally:
+rem    the app.asar inside them is mmap-ed by a file watcher or the Windows
+rem    Search indexer, so del reports "file in use" and renaming reports
+rem    "Device or resource busy". Renaming the folder does not help either.
+rem    This script stops the indexer, deletes the files recursively, removes
+rem    the folders, then starts the indexer again.
 rem
-rem  用法：双击（会弹 UAC），删完自己停住让你看结果。
+rem  Keep this file ASCII-only with CRLF line endings.
+rem  A UTF-8 batch file with Chinese comments gets garbled by cmd: cmd parses
+rem  the file in the OEM codepage, and multibyte characters can swallow the
+rem  line breaks, so several commands get glued into one broken line.
+rem
+rem  Usage:
+rem    double click this file        -> asks for UAC, cleans, waits at the end
+rem    cleanup-leftovers.bat --dry   -> only prints what would be deleted
 rem ===========================================================================
+
+set "DRY=0"
+if /I "%~1"=="--dry" set "DRY=1"
+
+rem  Targets are relative to the project root (this file lives in tools\).
+set "TARGETS=release-203 release-204 release-portable release\win-unpacked release\win-unpacked.tmp .tmp\stage-r4 .tmp\stmp"
+
+cd /d "%~dp0.."
+
+if "%DRY%"=="1" goto dryrun
 
 net session >nul 2>&1
 if errorlevel 1 (
-  echo 需要管理员权限，正在申请...
-  powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
-  exit /b
+    echo [i] Administrator rights required, asking Windows for them...
+    powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+    exit /b
 )
 
-cd /d "%~dp0.."
-echo 当前目录: %CD%
+echo Working directory: %CD%
 echo.
 
-echo [1/3] 停止 Windows 搜索索引（WSearch）...
-sc stop WSearch >nul 2>&1
-timeout /t 3 /nobreak >nul
-
-echo [2/3] 删除残留目录...
-set FAILED=0
-for %%D in (
-  "release-203"
-  "release-portable"
-  "release\win-unpacked"
-  "release\win-unpacked.tmp"
-  ".tmp\stage-r4"
-  ".tmp\stmp"
-) do (
-  if exist "%%~D" (
-    rmdir /s /q "%%~D" 2>nul
-    if exist "%%~D" (
-      echo     [失败] %%~D
-      set FAILED=1
-    ) else (
-      echo     [已删] %%~D
-    )
-  )
+echo [1/3] Stopping Windows Search indexer...
+sc query WSearch >nul 2>&1
+if errorlevel 1 (
+    echo       WSearch service not found, skipped.
+) else (
+    sc stop WSearch >nul 2>&1
+    timeout /t 3 /nobreak >nul
 )
 
-echo [3/3] 恢复 Windows 搜索索引...
-sc start WSearch >nul 2>&1
+echo [2/3] Deleting leftover folders...
+set "FAILED=0"
+for %%D in (%TARGETS%) do call :nuke "%%D"
+
+echo [3/3] Starting Windows Search indexer again...
+sc query WSearch >nul 2>&1
+if not errorlevel 1 sc start WSearch >nul 2>&1
 
 echo.
 if "%FAILED%"=="1" (
-  echo 有目录没删掉。它们现在都是 0 字节空壳，不占空间。
-  echo 试试：关掉 WorkBuddy / VSCode / 资源管理器预览窗格，再跑一次本脚本；
-  echo 或者重启电脑后**先别打开这些程序**，直接跑本脚本。
+    echo   Some folders are still locked. They are empty shells holding
+    echo   0-byte files, so they waste no disk space.
+    echo   Close WorkBuddy / your IDE / the Explorer preview pane and run this
+    echo   again, or run it right after a reboot before opening those programs.
 ) else (
-  echo 全部清理完成。
+    echo   All cleaned.
 )
 echo.
 pause
+exit /b
+
+:dryrun
+echo [dry run] working directory: %CD%
+echo [dry run] targets:
+for %%D in (%TARGETS%) do call :nuke "%%D"
+echo.
+exit /b
+
+rem ---------------------------------------------------------------------------
+rem  :nuke <relative path>
+rem  Handle one target. Never aborts the script - reports per target instead.
+rem ---------------------------------------------------------------------------
+:nuke
+set "T=%~1"
+if not exist "%T%" (
+    echo       [skip ] %T%  - not found
+    goto :eof
+)
+if "%DRY%"=="1" (
+    echo       [would] %T%
+    goto :eof
+)
+if exist "%T%\" (
+    del /f /s /q "%T%\*" >nul 2>&1
+    rmdir /s /q "%T%" >nul 2>&1
+) else (
+    del /f /q "%T%" >nul 2>&1
+)
+if exist "%T%" (
+    echo       [FAIL ] %T%
+    set "FAILED=1"
+) else (
+    echo       [ OK  ] %T%
+)
+goto :eof
