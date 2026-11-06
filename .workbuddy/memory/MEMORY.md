@@ -89,7 +89,7 @@ icacls "C:\Users\PoXia\Desktop\DSH_Workspace" /remove:d Everyone
 
 ## 底座版本：发版前必须先查一次（用户明确要求的流程）
 
-应用版本号（2.0.x）≠ 底座版本。用户看不到 Electron 是 45 还是 38，
+应用版本号（2.1.x）≠ 底座版本。用户看不到 Electron 是 45 还是 38，
 所以「连发三个版本底座没动」是真会发生的，必须主动查，别等他问。
 
 一条命令：`npm run check:kernels`（`--strict` 大版本落后退出码 1，`--offline` 不联网）
