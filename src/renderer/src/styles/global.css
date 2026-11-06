@@ -1659,6 +1659,20 @@ html[data-theme='light'] .log {
   color: var(--accent-hover);
 }
 
+/* 信息表里的网址（关于页「项目主页」）——可点，点了在系统浏览器打开 */
+.kv__link {
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+  /* 长地址不要撑破两列布局 */
+  word-break: break-all;
+}
+
+.kv__link:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
 /* ==========================================================================
    可拖动分隔条
    ========================================================================== */

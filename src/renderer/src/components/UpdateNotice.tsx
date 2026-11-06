@@ -22,6 +22,7 @@ import React from 'react'
 import { Button, Card, Spinner } from './ui'
 import { Icons } from './icons'
 import type { DownloadProgress, UpdateInfo } from '@shared/updateTypes'
+import { RELEASES_URL } from '@shared/repoLinks'
 
 /** 把 1024 字节换算成 M */
 function fmtSize(bytes: number): string {
@@ -209,11 +210,7 @@ export function UpdateNotice({
           <div style={{ color: 'var(--warn)' }}>检查失败：{info?.detail ?? '未知原因'}</div>
           <div className="faint" style={{ marginTop: 6 }}>
             可能是网络问题。不影响使用 —— 想看最新版可以直接去{' '}
-            <button
-              type="button"
-              className="linkbtn"
-              onClick={() => open('https://github.com/zeal-hope-love/cmake-vscode-studio/releases')}
-            >
+            <button type="button" className="linkbtn" onClick={() => open(RELEASES_URL)}>
               GitHub Releases
             </button>
             。

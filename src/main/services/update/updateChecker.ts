@@ -26,14 +26,11 @@
 import { app, net } from 'electron'
 import type { UpdateInfo } from '@shared/updateTypes'
 import { compareVersion } from '@shared/versionCompare'
+import { REPO_NAME, REPO_OWNER } from '@shared/repoLinks'
 import { getSettings, saveSettings } from '../data/settingsStore'
 
 export type { UpdateInfo, UpdateAsset } from '@shared/updateTypes'
 export { compareVersion } from '@shared/versionCompare'
-
-/** GitHub 仓库坐标 —— 和 package.json 的 repository 保持一致 */
-const REPO_OWNER = 'zeal-hope-love'
-const REPO_NAME = 'cmake-vscode-studio'
 
 /** 缓存多久（毫秒）。6 小时内重复检查直接返回上次结果 */
 const CACHE_MS = 6 * 60 * 60 * 1000
@@ -151,11 +148,7 @@ export async function checkForUpdate(force = false): Promise<UpdateInfo> {
     return info
   } catch (err) {
     const msg =
-      err instanceof Error
-        ? err.name === 'AbortError'
-          ? '请求超时'
-          : err.message
-        : String(err)
+      err instanceof Error ? (err.name === 'AbortError' ? '请求超时' : err.message) : String(err)
 
     /*
      * 失败不写缓存 —— 这次网络不好，下次说不定就好了。

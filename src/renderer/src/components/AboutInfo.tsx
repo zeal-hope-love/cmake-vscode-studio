@@ -4,7 +4,13 @@
 
 import React from 'react'
 import { themeLabel, useStudio } from '../state/store'
+import { REPO_URL } from '@shared/repoLinks'
 import { Button } from './ui'
+
+/** 值是网址时渲染成可点的链接（点了在系统浏览器里打开） */
+function isLink(v: string): boolean {
+  return /^https?:\/\//i.test(v)
+}
 
 export function AboutInfo(): React.JSX.Element {
   const appInfo = useStudio((s) => s.appInfo)
@@ -15,6 +21,7 @@ export function AboutInfo(): React.JSX.Element {
     ? [
         ['应用名称', appInfo.name],
         ['版本', appInfo.version],
+        ['项目主页', REPO_URL],
         ['编写方式', 'AI 生成 · 人工提需求与验收'],
         ['运行方式', appInfo.isPackaged ? '打包版' : '开发模式'],
         ['主题', themeLabel(settings.theme)],
@@ -58,7 +65,28 @@ export function AboutInfo(): React.JSX.Element {
         {rows.map(([k, v]) => (
           <React.Fragment key={k}>
             <div className="kv__k">{k}</div>
-            <div className="kv__v">{v}</div>
+            <div className="kv__v">
+              {isLink(v) ? (
+                /*
+                 * 用 <a> 而不是 button：hover 时右下角能看到真实地址（和浏览器一致），
+                 * 中键/右键也能用系统那套「在新标签页打开」「复制链接」。
+                 * 但点击要拦掉默认导航 —— 这是 Electron，直接跳会让整个应用变成浏览器。
+                 */
+                <a
+                  className="kv__link"
+                  href={v}
+                  title={`在浏览器打开：${v}`}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    void window.api.openExternal(v)
+                  }}
+                >
+                  {v}
+                </a>
+              ) : (
+                v
+              )}
+            </div>
           </React.Fragment>
         ))}
       </div>

@@ -10,6 +10,7 @@ import { Button, Card, PageBody, PageHeader } from '../components/ui'
 import { AboutInfo } from '../components/AboutInfo'
 import { UpdateNotice } from '../components/UpdateNotice'
 import type { UpdateInfo } from '@shared/updateTypes'
+import { REPO_URL } from '@shared/repoLinks'
 import { Icons } from '../components/icons'
 
 export default function AboutPage(): React.JSX.Element {
@@ -89,7 +90,15 @@ export default function AboutPage(): React.JSX.Element {
         subtitle={appInfo ? `${appInfo.name} v${appInfo.version}` : 'CV Studio'}
         actions={
           <>
-            <Button size="sm" onClick={() => void openHelp()}>
+            <Button
+              size="sm"
+              onClick={() => void window.api.openExternal(REPO_URL)}
+              title={`在浏览器打开项目主页：${REPO_URL}`}
+            >
+              <Icons.external />
+              GitHub
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => void openHelp()}>
               新手引导
             </Button>
             <Button size="sm" variant="ghost" onClick={() => void resetOnboarding()}>
