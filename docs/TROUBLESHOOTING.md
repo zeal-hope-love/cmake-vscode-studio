@@ -195,3 +195,75 @@ $env:TMP  = "$PWD\.tmp\build"
 $env:TEMP = "$PWD\.tmp\build"
 npm run build
 ```
+
+---
+
+## 五、打包后 `package.json` 突然只剩外壳
+
+**症状**：打包成功、产物也正常，但 `package.json` 变成这样 —— 只剩
+`name / productName / version / description / main / author / license / private / dependencies`，
+`scripts` 和 `devDependencies` 全没了。之后 `npm run dist:setup` 直接报
+`Missing script`，看上去像仓库被谁动过：
+
+```
+$ git diff 3fa58be HEAD -- package.json
+-  "scripts": { "dev": "...", "dist": "...", ... },
+-  "devDependencies": { "electron": "^44.7.0", ... }
+```
+
+**原因**：`electron-builder` 在 packaging 阶段会为 app 目录生成一份**裁剪过的**
+`package.json`（只留运行时用得到的字段）。某些版本/某些打包路径下，这份裁剪版会
+被写回**源目录**，而不是只写进 `app.asar`。本项目在 2.0.3 用
+`npx electron-builder --win portable` 打包时踩到过一次（26.15.3）。
+
+**处理**：
+
+```powershell
+# 1. 从上一个正常提交取回完整版
+git show <好的提交>:package.json > package.json
+# 2. 把 version 改成当前版本（不要让它回退）
+# 3. 提交
+git add package.json && git commit -m "fix: 恢复被打包覆盖的 package.json"
+```
+
+**预防**：打包后随手 `git status --short`，`package.json` 不该出现在改动列表里
+（版本升级那次除外）。真出现在里面，先看 diff 有没有 `scripts` 被删。
+
+---
+
+## 六、`git push` 报 `CRYPT_E_NO_REVOCATION_CHECK`
+
+**症状**：
+
+```
+fatal: unable to access 'https://github.com/...': schannel:
+next InitializeSecurityContext failed: CRYPT_E_NO_REVOCATION_CHECK (0x80092012)
+```
+
+`gh` 能正常用（`gh api user` 有返回），只有 `git push` 挂。
+
+**原因**：本机走了**本地代理做的 TLS 中间人**（本例是 SteamTools 的
+`CN=SteamTools Certificate`）。git 的 schannel 后端要检查证书吊销列表，
+但这个代理链路上拿不到 CRL/OCSP，于是握手失败。`-c http.schannelCheckRevoke=false`
+和 `http.sslBackend=openssl`（报 `unable to get local issuer certificate`）都治不了，
+因为 openssl 后端不认这个自签根证书。
+
+**解决**：把代理的根证书导出成 PEM，显式喂给 git 的 openssl 后端。
+
+```powershell
+# 1. 导出（Root 存储里找签发者）
+$c = Get-ChildItem Cert:\LocalMachine\Root, Cert:\CurrentUser\Root |
+     Where-Object { $_.Subject -match 'SteamTools' } | Select-Object -First 1
+$b64 = [Convert]::ToBase64String($c.RawData, 'InsertLineBreaks')
+"-----BEGIN CERTIFICATE-----`n$b64`n-----END CERTIFICATE-----" |
+  Set-Content -Encoding ascii .tmp\proxy-ca.pem
+
+# 2. 推送时带上
+git -c http.sslBackend=openssl -c http.sslCAInfo="$PWD\.tmp\proxy-ca.pem" push origin HEAD
+```
+
+`gh release create/upload` 不受影响（Go 的 TLS 栈直接读系统证书库），
+所以**发版**可以照常走 `gh`，只有代码推送需要这串参数。
+
+---
+
