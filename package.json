@@ -1,7 +1,7 @@
 {
   "name": "cmake-vscode-studio",
   "productName": "CV Studio",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "CV Studio —— 面向 CMake + VSCode 的嵌入式工程配置器：检测工程、生成并修改 .vscode 配置、管理 CMake 目标与源文件",
   "main": "./out/main/index.js",
   "author": "PoXia",
