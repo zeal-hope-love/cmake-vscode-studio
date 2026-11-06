@@ -64,15 +64,29 @@ function step(msg) {
   console.log(`\n[installer] ${msg}`)
 }
 
+/**
+ * 调**本地**的 electron-builder。
+ *
+ * 不能用 `npx electron-builder`：打安装器那一步的 cwd 是暂存目录（staging），
+ * 那里没有 node_modules，npx 找不到本地 bin 就去 registry 临时下一个最新版
+ * （实测拉到 26.18.0，项目锁的是 26.15.3）。两个版本的压缩策略不一样，
+ * 同一份源码打出来的包一大一小，发布产物就不可复现了。
+ *
+ * 直接跑 node_modules 里的 cli.js，版本永远是 package-lock 里锁着的那个。
+ */
+function runBuilder(args, cwd) {
+  const cli = join(root, 'node_modules', 'electron-builder', 'cli.js')
+  if (!existsSync(cli)) {
+    throw new Error('找不到本地 electron-builder，先跑一次 npm install')
+  }
+  execFileSync(process.execPath, [cli, ...args], { cwd, stdio: 'inherit' })
+}
+
 // ---------------------------------------------------------------------------
 
 step(`构建 ${pkg.productName} v${pkg.version} 应用本体`)
 if (!existsSync(join(unpacked, `${pkg.productName}.exe`))) {
-  execFileSync('npx', ['electron-builder', '--win', '--dir'], {
-    cwd: root,
-    stdio: 'inherit',
-    shell: true
-  })
+  runBuilder(['--win', '--dir'], root)
 } else {
   console.log(`  复用已有的 ${unpacked}`)
 }
@@ -305,11 +319,7 @@ writeFileSync(
   'utf8'
 )
 
-execFileSync('npx', ['electron-builder', '--config', setupConfig], {
-  cwd: staging,
-  stdio: 'inherit',
-  shell: true
-})
+runBuilder(['--config', setupConfig], staging)
 
 step('整理产物')
 const produced = join(installerOut, `CmakeVscodeStudio-${pkg.version}-setup.exe`)
