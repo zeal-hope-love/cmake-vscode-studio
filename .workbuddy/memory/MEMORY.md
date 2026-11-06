@@ -59,6 +59,11 @@ icacls "C:\Users\PoXia\Desktop\DSH_Workspace" /remove:d Everyone
   `history.json` 写入失败时进 `pending` 内存队列下次补写
 - `historyStore.ts` 曾无故回退过一次，改完先 `git diff --stat` 核对
 - 单实例锁只在打包版启用（`app.isPackaged`），开发模式靠 `CFGSTUDIO_ALLOW_MULTI=1`
+- **`.bat` 必须纯 ASCII + CRLF + 无 BOM**。用 UTF-8 或 LF 写都会被 cmd 解析坏：
+  中文变乱码，多字节字符吞掉行尾，命令粘成一行报「''cho' 不是内部或外部命令」。
+  `chcp 65001` 救不了 `for` / `if (...)` 块。要中文说明就写在旁边的 .md 里
+- **只用 IDEA**：`.vscode/` 已全部移除（`.gitignore` 也忽略它），
+  调试/打包配置在 `.idea/runConfigurations/`（9 套，已提交）
 
 ## 符号扫描（VOFA 调参）的边界 —— 别再让用户手写 extern
 
