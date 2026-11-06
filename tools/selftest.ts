@@ -100,6 +100,7 @@ import { bindingFromSymbol, mapToPackBindings } from '../src/shared/vofaMap'
 
 let failures = 0
 let checks = 0
+let skipped = 0
 
 function check(name: string, condition: boolean, detail = ''): void {
   checks += 1
@@ -109,6 +110,20 @@ function check(name: string, condition: boolean, detail = ''): void {
     failures += 1
     console.log(`  ✗ ${name}${detail ? `  —— ${detail}` : ''}`)
   }
+}
+
+/**
+ * 跳过一项检查。
+ *
+ * 用于「环境不具备就没法验证」的断言，比如本机没装 OpenOCD 时，
+ * 不该因为写不出 openocdPath 就判定代码坏了 —— 那是环境差异，不是回归。
+ * CI 的 windows-latest 就没装 OpenOCD，之前这几项把整条流水线卡红了好几版。
+ *
+ * 跳过的项单独计数，不计入 failures，也不会伪装成通过（输出里是 `·` 而不是 `✓`）。
+ */
+function skip(name: string, reason: string): void {
+  skipped += 1
+  console.log(`  · ${name}  （跳过：${reason}）`)
 }
 
 function section(title: string): void {
@@ -141,9 +156,19 @@ if (!tools.envRoots.length) {
 console.log(`  OpenOCD scripts: ${tools.openocdScripts ?? '(未找到)'}`)
 console.log(`  SVD 目录       : ${tools.svdDir ?? '(未找到)'}`)
 
-check('探测到 OpenOCD', tools.items.openocd.found, tools.items.openocd.path ?? '')
+/*
+ * OpenOCD 是「用户机器上装没装」的问题，不是代码问题。
+ * 装了才断言能探测到；没装就跳过 —— CI 的 windows-latest 就没装，
+ * 之前硬断言导致 release 流水线每次都红。
+ */
+if (tools.items.openocd.found) {
+  check('探测到 OpenOCD', true, tools.items.openocd.path ?? '')
+  check('定位到 OpenOCD scripts 目录', tools.openocdScripts !== null)
+} else {
+  skip('探测到 OpenOCD', '本机未安装 OpenOCD')
+  skip('定位到 OpenOCD scripts 目录', '本机未安装 OpenOCD')
+}
 check('探测到 CMake', tools.items.cmake.found)
-check('定位到 OpenOCD scripts 目录', tools.openocdScripts !== null)
 
 // ---- 环境变量优先：只有确实存在这些变量时才断言，换台机器不会误报 ----
 if (process.env.STM32CLT_PATH) {
@@ -656,14 +681,19 @@ check(
   flashTasks.map((t) => (t.dependsOn ?? []).join(',')).join(' | ')
 )
 
-check(
-  'settings.json 含 cortex-debug.openocdPath.windows',
-  typeof bundle.settings['cortex-debug.openocdPath.windows'] === 'string'
-)
-check(
-  'settings.json 的路径用正斜杠',
-  !String(bundle.settings['cortex-debug.openocdPath.windows'] ?? '').includes('\\')
-)
+if (tools.items.openocd.found) {
+  check(
+    'settings.json 含 cortex-debug.openocdPath.windows',
+    typeof bundle.settings['cortex-debug.openocdPath.windows'] === 'string'
+  )
+  check(
+    'settings.json 的路径用正斜杠',
+    !String(bundle.settings['cortex-debug.openocdPath.windows'] ?? '').includes('\\')
+  )
+} else {
+  skip('settings.json 含 cortex-debug.openocdPath.windows', '本机未安装 OpenOCD，不会写入该路径')
+  skip('settings.json 的路径用正斜杠', '本机未安装 OpenOCD')
+}
 check(
   'c_cpp_properties 指向 compile_commands.json',
   String(bundle.cpp.configurations[0].compileCommands).endsWith('compile_commands.json'),
@@ -716,10 +746,14 @@ check(
 )
 
 const settingsOnDisk = JSON.parse(readFileSync(join(demo, '.vscode', 'settings.json'), 'utf8'))
-check(
-  '落盘的 settings.json 含 openocd 路径',
-  Boolean(settingsOnDisk['cortex-debug.openocdPath.windows'])
-)
+if (tools.items.openocd.found) {
+  check(
+    '落盘的 settings.json 含 openocd 路径',
+    Boolean(settingsOnDisk['cortex-debug.openocdPath.windows'])
+  )
+} else {
+  skip('落盘的 settings.json 含 openocd 路径', '本机未安装 OpenOCD')
+}
 
 const cfgOnDisk = readFileSync(join(demo, '.vscode', 'openocd-stm32f1x-cmsis-dap.cfg'), 'utf8')
 check('落盘的 OpenOCD 配置含 target/stm32f1x.cfg', cfgOnDisk.includes('target/stm32f1x.cfg'))
@@ -3359,7 +3393,9 @@ check(
 }
 
 section('结果')
-console.log(`  共 ${checks} 项检查，失败 ${failures} 项`)
+console.log(
+  `  共 ${checks} 项检查，失败 ${failures} 项` + (skipped > 0 ? `，跳过 ${skipped} 项` : '')
+)
 if (failures > 0) {
   console.log('  ✗ 自检未通过')
   process.exit(1)
