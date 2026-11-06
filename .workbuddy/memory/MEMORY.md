@@ -41,6 +41,15 @@ icacls "C:\Users\PoXia\Desktop\DSH_Workspace" /remove:d Everyone
 - 桌面被 OneDrive 重定向成 reparse point，但**不影响写入**
 - Bash 工具里嵌引号的 Windows 命令容易被转义打坏，用 PowerShell 工具更稳；
   本环境禁止从 Bash 调 powershell
+- **打包后必须 `git status --short` 看 `package.json`**：electron-builder 有几率
+  把源 package.json 覆盖成裁剪版（丢 scripts / devDependencies），之后所有 npm script 失效。
+  恢复用 `git show <好提交>:package.json`，再把 version 改回当前值
+- **`git push` 和 `gh` 走不同通道**：本机有代理做 TLS MITM，git 走 schannel 会报
+  `CRYPT_E_NO_REVOCATION_CHECK`。push 要用
+  `git -c http.sslBackend=openssl -c http.sslCAInfo=<导出的根证书.pem> push`；
+  `gh release`/`gh api` 不受影响（Go 读系统证书库），发版可以直接用 gh
+- **发版是两版并存**：`npm run dist:setup`（自绘安装界面）+ `npm run dist:portable`（绿色单文件），
+  两个都传 Release；应用内更新只读 `/releases/latest`，不需要 latest.yml
 
 ## 代码约定
 
