@@ -618,7 +618,94 @@ node -e "const b=require('fs').readFileSync('release/win-unpacked/resources/app.
 
 ---
 
-## 五、一句话总结
+## 五、发版前先过一遍「底座」
+
+**应用自己的版本号（2.0.4）和它跑在什么底座上是两件事。**
+
+界面上只有我们自己的 2.0.x；Electron 是 45 还是 38、安装器引擎是 26.15 还是 26.18，
+用户完全看不出来。所以会出现「连着发了三个版本，其实底座一个没动」这种情况 ——
+安全问题跟不上升级、新版 Web 标准用不了、别人早就修掉的 bug 我们还在吃。
+
+一条命令看全：
+
+```powershell
+npm run check:kernels
+```
+
+输出长这样（节选）：
+
+```
+  运行时内核 —— 里面装的 Chromium / Node 决定能用的 Web 标准和安全补丁
+  ✓     electron                45.2.3      45.2.3      最新
+  打包与安装器 —— 生成 exe、安装包、绿色版的那一层；NSIS 也由它带下来
+  !     electron-builder        26.15.3     26.18.0     小版本 +3
+  构建链 —— 这三个的大版本必须一起升，单独升一个必炸
+  !!    electron-vite           5.0.0       6.0.0       大版本 +1
+```
+
+标记含义：`✓` 最新　`~` 补丁落后　`!` 小版本落后　`!!` 大版本落后　`↑` 比线上新（本地拿的预发布）
+　`=` 有意锁住（例如 `@types/node` 要跟 Electron 内置的 Node 24 对齐，不能升到 26）
+
+### 哪些算「底座」
+
+| 层 | 部件 | 落版本会怎样 |
+| --- | --- | --- |
+| 运行时内核 | `electron` | 里面的 Chromium / Node 决定能用的 Web 标准和安全补丁 |
+| 打包与安装器 | `electron-builder` | 生成 exe / NSIS 安装包 / 绿色版；版本变了对同一份源码的产物大小有影响 |
+| 构建链 | `electron-vite` + `vite` + `@vitejs/plugin-react` | **三者的对等依赖互相咬死，必须同一个提交一起升** |
+| 界面框架 | `react` / `react-dom` / `zustand` | 运行时库，跟着走就行 |
+| 语言与工具 | `typescript` / `prettier` / `@types/*` | 不参与运行时，TypeScript 大版本要单独验证 |
+
+附带还有两个不在 `package.json` 里的：
+
+- **NSIS** —— 第一次打包时由 electron-builder 下到 `%LOCALAPPDATA%\electron-builder\Cache`，
+  版本跟着 electron-builder 走，不用单独管
+- **构建用 Node** —— 本机 `node -v` 和 CI 的 `node-version`（`.github/workflows/release.yml`）
+  要保持一致，否则「本机能打、CI 挂了」
+
+### 什么时候升，怎么升
+
+**发补丁版（2.0.4 → 2.0.5）**：只升补丁 / 小版本，不碰大版本。
+
+```powershell
+npm install -D electron-builder@latest react@latest react-dom@latest zustand@latest
+```
+
+**发大版本（2.0 → 3.0，或者 Electron 跳大版本）**：整条底座一起升，单独一个提交。
+
+```powershell
+npm install -D electron@latest electron-builder@latest
+npm install -D electron-vite@latest vite@latest @vitejs/plugin-react@latest
+npm run typecheck; npm run selftest; npm run build
+```
+
+规矩：
+
+1. **构建链三件套不许拆开升。** `@vitejs/plugin-react@6` 的 `peerDependencies` 直接写
+   `vite: ^8`，只升一个是装不上的（npm 会警告甚至报 ERESOLVE）。
+2. **大版本升级必须单独一个 commit**，正文写清升了什么、跑过哪些验证。
+   混在功能提交里，将来 `git bisect` 找不出是谁搞坏的。
+3. **升完必须重打一次包再验**，不能只看 `npm run dev`：Electron 大版本改的往往是打包产物
+   的行为（asar、原生模块、沙箱），dev 模式下根本走不到。
+4. `--strict` 可以让它变成硬检查（内核 / 打包 / 构建链有大版本落后就退出码 1），
+   适合将来挂到 CI 上做提醒：
+
+   ```powershell
+   npm run check:kernels -- --strict
+   ```
+
+### 打包时会自动提醒
+
+`npm run dist:setup` 一开始会调一次 `check-kernels`（只打印，不拦截 —— 大版本升级要单独
+验证，不能因为线上有新版就把这次打包卡死）。不想看：
+
+```powershell
+$env:CVSTUDIO_SKIP_KERNEL_CHECK=1; npm run dist:setup
+```
+
+---
+
+## 六、一句话总结
 
 - **用什么**：VS Code + electron-vite + React。Electron 没有专用 IDE，前端工具链就是它的工具链。
 - **怎么调**：界面按 F12；主进程 `npm run dev:inspect` + VS Code attach 5858；业务逻辑用 `npm run selftest` 无头跑。

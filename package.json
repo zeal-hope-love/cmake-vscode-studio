@@ -29,10 +29,8 @@
     "version:major": "npm version --no-git-tag-version major",
     "postinstall": "node tools/ensure-electron.mjs",
     "dist:copy": "node tools/copy-release.mjs",
-    "dist:setup": "node tools/build-installer.mjs"
-  },
-  "dependencies": {
-    "zustand": "^5.0.15"
+    "dist:setup": "node tools/build-installer.mjs",
+    "check:kernels": "node tools/check-kernels.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -40,12 +38,13 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^45.2.3",
-    "electron-builder": "^26.15.3",
+    "electron-builder": "^26.18.0",
     "electron-vite": "^5.0.0",
     "prettier": "^3.9.10",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "typescript": "~5.9.3",
-    "vite": "^7.3.7"
+    "vite": "^7.3.7",
+    "zustand": "^5.1.0"
   }
 }

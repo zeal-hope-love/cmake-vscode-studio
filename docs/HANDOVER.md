@@ -329,6 +329,10 @@ const res = await net.fetch(url, { headers: { 'User-Agent': '...' } })
 ## 五、发布流程
 
 ```bash
+# 0. 先看底座（Electron / electron-builder / 构建链）落后多少
+#    发大版本必做，补丁版也扫一眼：npm run check:kernels
+npm run check:kernels
+
 # 1. 升版本
 npm version patch           # 2.0.1 → 2.0.2
 

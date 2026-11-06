@@ -84,6 +84,26 @@ function runBuilder(args, cwd) {
 
 // ---------------------------------------------------------------------------
 
+/*
+ * 打包前先过一遍「底座」版本：Electron / electron-builder / 构建链。
+ *
+ * 起因：应用自己的版本号是我们手改的数字，底座落后多少在界面上完全看不出来，
+ * 结果连着发了几个 2.0.x，跑的还是老内核。这里只**提示**不拦截 ——
+ * 大版本升级要单独验证，不能因为有个新版本就把这次打包卡死。
+ *
+ * 不想看就 CVSTUDIO_SKIP_KERNEL_CHECK=1。
+ */
+if (process.env.CVSTUDIO_SKIP_KERNEL_CHECK !== '1') {
+  step('检查底座版本（只提示，不拦截）')
+  try {
+    execFileSync(process.execPath, [join(root, 'tools', 'check-kernels.mjs')], {
+      stdio: 'inherit'
+    })
+  } catch {
+    console.log('  台账没跑起来（多半是没网），跳过')
+  }
+}
+
 step(`构建 ${pkg.productName} v${pkg.version} 应用本体`)
 if (!existsSync(join(unpacked, `${pkg.productName}.exe`))) {
   runBuilder(['--win', '--dir'], root)
@@ -231,9 +251,7 @@ function trimPayload(srcDir, dstDir) {
 step('把应用本体裁完放进 payload/')
 const trimDir = join(staging, 'trimmed')
 const trim = trimPayload(unpacked, trimDir)
-console.log(
-  `  裁掉 ${trim.removed.length} 个文件，省 ${(trim.savedBytes / 1024 / 1024).toFixed(1)} MB`
-)
+console.log(`  裁掉 ${trim.removed.length} 个文件，省 ${(trim.savedBytes / 1024 / 1024).toFixed(1)} MB`)
 
 step('把裁剪后的内容放进 payload/（不压缩，启动快）')
 /*
