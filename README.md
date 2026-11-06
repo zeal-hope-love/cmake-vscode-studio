@@ -84,8 +84,11 @@
 到 [Releases](https://github.com/zeal-hope-love/cmake-vscode-studio/releases) 下载最新版：
 
 ```
-CmakeVscodeStudio-<版本>-setup.exe     自包含安装包，双击选目录即可
+CmakeVscodeStudio-<版本>-setup.exe      自包含安装包，双击选目录即可
+CmakeVscodeStudio-<版本>-portable.exe   绿色单文件，自解压到临时目录运行，不写注册表
 ```
+
+两个版本共用同一份数据目录，绿色版也读得到安装版的设置；放 U 盘或临时机器上用绿色版更省事。
 
 不需要另外装 Node、Electron 或 VSCode 扩展本体（配置生成不依赖扩展；真调试当然要 `cortex-debug`）。
 
@@ -100,7 +103,11 @@ CmakeVscodeStudio-<版本>-setup.exe     自包含安装包，双击选目录即
 ```
 
 应用启动后会在后台静默查一次 GitHub 上的最新 Release（6 小时缓存，可在设置里关掉）。
-有新版本时在界面上提示并给出下载链接 —— **目前不做静默自动安装**，得你自己下载覆盖。
+有新版本时顶部会出现提示条，「查看更新」会跳到「关于与版本」里的版本卡片 ——
+那里能**在应用内下载**安装包，下完直接拉起安装器，不用再开浏览器。
+
+装不装、什么时候装仍然由你决定，**没有静默自动安装**这一说。
+绿色版是自解压到临时目录跑的，不参与应用内升级，换版本直接下新的 portable 覆盖即可。
 
 > 从 1.x 升级有改名的历史包袱（安装目录、数据目录都变了，旧目录的数据会自动迁移，
 > 但旧版本不会自动卸载），细节见 [详细手册 · 更新与覆盖安装](docs/MANUAL.md#更新与覆盖安装)。
@@ -119,7 +126,8 @@ npm run selftest     # 内置自检
 打包成安装包：
 
 ```powershell
-npm run dist:setup   # → release/CmakeVscodeStudio-<版本>-setup.exe
+npm run dist:setup      # → release/CmakeVscodeStudio-<版本>-setup.exe（自绘安装界面）
+npm run dist:portable   # → release/CmakeVscodeStudio-<版本>-portable.exe（绿色单文件）
 ```
 
 这不是 NSIS 向导，是自己用 Electron 画的安装界面（源码在 `installer/`），
