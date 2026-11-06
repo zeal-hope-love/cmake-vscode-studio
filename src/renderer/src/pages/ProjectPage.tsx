@@ -11,21 +11,7 @@
 import React from 'react'
 import { useProjectWritten, useStudio } from '../state/store'
 import { probeByKey } from '@shared/probes'
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  DataTable,
-  EmptyState,
-  Field,
-  Kv,
-  PageBody,
-  PageHeader,
-  PathText,
-  Spinner,
-  TextInput
-} from '../components/ui'
+import { Alert, Badge, Button, Card, DataTable, EmptyState, Field, Kv, PageBody, PageHeader, PathText, Spinner, TextInput } from '../components/ui'
 import { Icons } from '../components/icons'
 import { WorkflowStrip } from '../components/WorkflowStrip'
 import { WriteSummary } from '../components/WriteSummary'

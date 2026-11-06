@@ -18,7 +18,7 @@
  * 写成新格式，老的照样能导进来。
  */
 
-import type { ChannelBinding, ConfigTemplate, PidBinding } from './types'
+import type { ChannelBinding, ConfigTemplate, PidBinding } from './types/index'
 
 // --------------------------------------------------------------------------
 // 模块包模板（新增）

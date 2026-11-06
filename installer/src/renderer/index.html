@@ -5,24 +5,27 @@
     <title>CV Studio 安装程序</title>
     <style>
       /* ---------------------------------------------------------------------
-         风格对齐 DeepSeek Harness / Windows 11 原生安装器：
-         浅色底、克制配色、大留白、圆角控件、单一强调色。
-         不做花哨渐变和深色主题 —— 安装器就该看起来像个系统组件。
+         极简单列布局（对齐 DeepSeek Harness 安装器的观感）：
+
+           纯白底 · 单一黑色强调色 · 大留白 · 内容垂直居中的一列
+
+         整页只有四个元素：圆形标志 → 字标 → 一行可点开的文字 → 黑色胶囊按钮。
+         没有卡片、没有分割线、没有页脚工具栏 —— 安装器只做一件事，
+         界面上就不该有第二件事在抢注意力。
+
+         状态切换（展开路径 / 安装进度 / 安装结果）都发生在「那一行文字」的
+         位置，标志和按钮位置不动，所以整个过程界面不会跳。
          --------------------------------------------------------------------- */
       :root {
-        --bg: #f3f3f3;
-        --card: #ffffff;
-        --border: #e5e5e5;
-        --border-strong: #d4d4d4;
-        --fg: #1a1a1a;
-        --fg-muted: #6b6b6b;
-        --fg-faint: #9a9a9a;
-        --accent: #4a7dff;
-        --accent-hover: #3a6ae8;
-        --accent-soft: #eef3ff;
-        --ok: #16a34a;
-        --err: #dc2626;
-        --radius: 8px;
+        --bg: #ffffff;
+        --fg: #111111;
+        --fg-mid: #3a3a3a;
+        --fg-soft: #7a7a7a;
+        --fg-faint: #b4b4b4;
+        --line: #e7e7e7;
+        --line-strong: #d5d5d5;
+        --hover: #f4f4f4;
+        --err: #b42318;
       }
 
       * {
@@ -42,153 +45,203 @@
         -webkit-font-smoothing: antialiased;
         text-rendering: optimizeLegibility;
         user-select: none;
-        /*
-         * 中日韩字形优先用系统 UI 字体，避免某些字落到衬线体上。
-         */
-        font-variant-ligatures: none;
+        cursor: default;
       }
 
-      #app {
-        display: flex;
-        flex-direction: column;
-        height: 100%;
-        padding: 28px 32px 0;
-        /* 无边框窗口要自己声明可拖动区，否则窗口拖不动 */
-        -webkit-app-region: drag;
-      }
-
-      /* 交互控件必须排除掉，否则点不动 */
-      button,
-      input,
-      label,
-      .body {
-        -webkit-app-region: no-drag;
-      }
-
-      /* ---- 右上角窗口按钮 ---- */
-      .winbtn {
+      /* ---- 顶部：只剩最小化 / 关闭两个极轻的图标 ---- */
+      .titlebar {
         position: fixed;
         top: 0;
         right: 0;
-        width: 46px;
-        height: 34px;
-        border: 0;
-        border-radius: 0;
-        background: transparent;
-        color: #6b6b6b;
-        font-size: 14px;
-        line-height: 1;
-        cursor: pointer;
-        -webkit-app-region: no-drag;
+        display: flex;
+        gap: 2px;
+        padding: 6px 8px 0 0;
+        -webkit-app-region: drag;
+        z-index: 10;
+      }
+
+      .winbtn {
+        width: 34px;
+        height: 28px;
         display: flex;
         align-items: center;
         justify-content: center;
         padding: 0;
-        transition: background 0.12s ease;
-        z-index: 10;
-      }
-
-      .winbtn:hover {
-        background: #e81123;
-        color: #fff !important;
         border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: #9b9b9b;
+        cursor: pointer;
+        -webkit-app-region: no-drag;
+        transition:
+          background 0.12s ease,
+          color 0.12s ease;
       }
 
-      .winbtn.close {
-        border: 0;
+      .winbtn:hover:not(:disabled) {
+        background: var(--hover);
+        color: var(--fg);
       }
 
-      /* ---- 头部：图标 + 名称 + 版本 ---- */
-      .header {
+      .winbtn:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+
+      .winbtn svg {
+        display: block;
+      }
+
+      /* ---- 主体：一列，垂直居中 ---- */
+      #app {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        /*
+         * 上方多留一截：视觉重心压在偏下 40% 的位置，而不是死正中。
+         * 死正中会显得整块内容「浮」在半空；参考图的按钮底部离下沿只有一成多，
+         * 顶上却留了三成白 —— 这个不对称才是它的呼吸感来源。
+         */
+        padding: 124px 44px 0;
+        -webkit-app-region: drag;
+      }
+
+      button,
+      input,
+      label,
+      .slot {
+        -webkit-app-region: no-drag;
+      }
+
+      /* ---- 标志：透明底的渐变 C，柔和投影 ---- */
+      /*
+       * 2.0.2 起图标本身是「渐变 C + 透明底」，不再是一整块圆角方块。
+       * 所以不能再套圆形裁切和高光 —— 透明的 GIF 边上会多出一圈没有内容的
+       * 亮边，看起来像个脏的圆环。改用 drop-shadow：阴影跟着 alpha 走，
+       * 贴在 C 的笔画上，才是图标本身的形状。
+       */
+      .orb {
+        width: 104px;
+        height: 104px;
+        margin: 0 auto 28px;
+      }
+
+      .orb img {
+        width: 100%;
+        height: 100%;
+        display: block;
+        filter: drop-shadow(0 10px 22px rgba(84, 96, 208, 0.3));
+      }
+
+      /* ---- 字标：小写名 + 黑底白字方框 ---- */
+      .lockup {
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        gap: 10px;
+      }
+
+      .lockup .mark {
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        line-height: 1;
+        color: var(--fg);
+      }
+
+      /*
+       * 方框要**贴着 cv 的字身**，不能一高一低。
+       *
+       * 做法：mark 是 32px + line-height 1，行盒底边在基线下 8px（Segoe 的
+       * 升部/降部是 3:1）。所以用 align-items: flex-end 让方框底边对齐行盒底，
+       * 再用 margin-bottom 把方框压回基线上；高度取 16px = cv 的 x-height，
+       * 方框的上下沿就正好压住字母的上下沿。
+       *
+       * margin-bottom 实测取 6px 而不是 8px —— 光靠字体的升部/降部比例算会差 2px，
+       * 这个值是拿放大截图对出来的，别按公式改回去。
+       *
+       * letter-spacing 会在最后一个字母后多留一段空白，右边看着比左边厚，
+       * 用 text-indent 反向补回来。
+       */
+      .lockup .tag {
         display: flex;
         align-items: center;
-        gap: 14px;
-        flex: 0 0 auto;
+        height: 16px;
+        margin-bottom: 6px;
+        padding: 0 5px 0 7px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-indent: 0.18em;
+        line-height: 1;
+        text-transform: uppercase;
+        color: #fff;
+        background: #0a0a0a;
+        border-radius: 4px;
       }
 
-      .logo {
-        width: 52px;
-        height: 52px;
-        flex: 0 0 auto;
+      /* ---- 中间那一格：文字 / 路径 / 进度 / 结果都放这里，高度固定 ---- */
+      .slot {
+        width: 100%;
+        min-height: 100px;
+        margin: 30px 0 4px;
         display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
       }
 
-      .logo img {
+      /* 未展开时：就一行可点的字 */
+      .pick-text {
+        border: 0;
+        background: transparent;
+        color: var(--fg-mid);
+        font-family: inherit;
+        font-size: 14.5px;
+        padding: 7px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition:
+          background 0.13s ease,
+          color 0.13s ease;
+      }
+
+      .pick-text:hover {
+        background: var(--hover);
+        color: var(--fg);
+      }
+
+      /* 展开后：路径输入 + 选择按钮 */
+      .picker {
+        display: none;
         width: 100%;
-        height: 100%;
+        max-width: 432px;
+      }
+
+      .picker.on {
         display: block;
-        /* 图标本身是圆角方块，加一点点阴影让它从背景上浮起来 */
-        filter: drop-shadow(0 2px 6px rgba(91, 141, 239, 0.25));
       }
 
-      .header h1 {
-        margin: 0;
-        font-size: 19px;
-        font-weight: 600;
-        letter-spacing: -0.01em;
-      }
-
-      .header .sub {
-        margin: 3px 0 0;
-        font-size: 12.5px;
-        color: var(--fg-muted);
-      }
-
-      .ver {
-        margin-left: auto;
-        font-size: 12px;
-        color: var(--fg-muted);
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 20px;
-        padding: 3px 12px;
-      }
-
-      .divider {
-        height: 1px;
-        background: var(--border);
-        margin: 20px 0 0;
-        flex: 0 0 auto;
-      }
-
-      /* ---- 内容区 ---- */
-      .body {
-        flex: 1;
-        min-height: 0;
-        overflow-y: auto;
-        padding: 22px 0;
-      }
-
-      .field {
-        margin-bottom: 22px;
-      }
-
-      .field__label {
-        font-size: 12.5px;
-        color: var(--fg-muted);
-        margin-bottom: 8px;
-      }
-
-      .row {
+      .pathrow {
         display: flex;
         gap: 8px;
-        align-items: stretch;
       }
 
       input[type='text'] {
         flex: 1;
         min-width: 0;
-        height: 38px;
-        padding: 0 13px;
-        border-radius: 6px;
-        border: 1px solid var(--border-strong);
-        background: var(--card);
+        height: 46px;
+        padding: 0 15px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
         color: var(--fg);
-        font-size: 13px;
         font-family: inherit;
+        font-size: 13px;
         user-select: text;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
         transition:
           border-color 0.15s ease,
           box-shadow 0.15s ease;
@@ -196,105 +249,84 @@
 
       input[type='text']:focus {
         outline: none;
-        border-color: var(--accent);
-        box-shadow: 0 0 0 3px rgba(74, 125, 255, 0.14);
+        border-color: #bdbdbd;
+        box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.05);
       }
 
-      button {
-        height: 38px;
-        padding: 0 22px;
-        border-radius: 6px;
-        border: 1px solid var(--border-strong);
-        background: var(--card);
-        color: var(--fg);
-        font-size: 13px;
+      .sq {
+        height: 46px;
+        min-width: 76px;
+        padding: 0 20px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fff;
+        color: var(--fg-mid);
         font-family: inherit;
+        font-size: 13px;
         cursor: pointer;
-        transition: all 0.15s ease;
-        white-space: nowrap;
+        transition:
+          background 0.13s ease,
+          border-color 0.13s ease;
       }
 
-      button:hover:not(:disabled) {
+      .sq:hover {
         background: #fafafa;
-        border-color: #c4c4c4;
+        border-color: var(--line-strong);
       }
 
-      button:active:not(:disabled) {
-        background: #f0f0f0;
-      }
-
-      button.primary {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: #fff;
-        font-weight: 500;
-      }
-
-      button.primary:hover:not(:disabled) {
-        background: var(--accent-hover);
-        border-color: var(--accent-hover);
-      }
-
-      button:disabled {
-        opacity: 0.42;
-        cursor: default;
-      }
-
-      /* ---- 复选框 ---- */
-      .checks {
+      .opts {
         display: flex;
-        flex-direction: column;
-        gap: 11px;
+        justify-content: center;
+        gap: 20px;
+        margin-top: 16px;
+        font-size: 12px;
+        color: var(--fg-soft);
       }
 
-      label.check {
+      .chk {
         display: flex;
         align-items: center;
-        gap: 9px;
+        gap: 6px;
         cursor: pointer;
-        font-size: 13px;
       }
 
-      label.check input {
-        width: 17px;
-        height: 17px;
-        accent-color: var(--accent);
-        cursor: pointer;
+      .chk input {
+        width: 13px;
+        height: 13px;
         margin: 0;
+        accent-color: #111;
+        cursor: pointer;
       }
 
       /* ---- 进度 ---- */
-      .progress-wrap {
+      .progress {
         display: none;
-        padding-top: 4px;
+        width: 100%;
+        max-width: 432px;
       }
 
-      .progress-wrap.on {
+      .progress.on {
         display: block;
       }
 
-      .progress-head {
+      .pline {
         display: flex;
         justify-content: space-between;
         align-items: baseline;
         margin-bottom: 10px;
-      }
-
-      .progress-head .stage {
-        font-size: 13.5px;
-        font-weight: 500;
-      }
-
-      .progress-head .pct {
         font-size: 12.5px;
-        color: var(--fg-muted);
+        color: var(--fg-mid);
+      }
+
+      .pline .pct {
+        color: var(--fg-faint);
         font-variant-numeric: tabular-nums;
       }
 
       .bar {
-        height: 6px;
+        height: 4px;
         border-radius: 99px;
-        background: #e4e4e4;
+        background: #ededed;
         overflow: hidden;
       }
 
@@ -302,201 +334,237 @@
         height: 100%;
         width: 0;
         border-radius: 99px;
-        background: var(--accent);
-        transition: width 0.18s linear;
+        background: var(--fg);
+        transition: width 0.2s linear;
       }
 
       .bar__fill.indet {
-        width: 32% !important;
-        animation: slide 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        width: 30% !important;
+        animation: slide 1.25s cubic-bezier(0.4, 0, 0.2, 1) infinite;
       }
 
       @keyframes slide {
         0% {
-          transform: translateX(-110%);
+          transform: translateX(-105%);
         }
         100% {
-          transform: translateX(350%);
+          transform: translateX(340%);
         }
       }
 
-      .progress-meta {
-        display: flex;
-        justify-content: space-between;
-        margin-top: 9px;
-        font-size: 12px;
-        color: var(--fg-faint);
-        font-variant-numeric: tabular-nums;
-      }
-
-      .current-file {
-        margin-top: 7px;
-        font-family: 'Cascadia Mono', Consolas, monospace;
-        font-size: 11.5px;
-        color: var(--fg-faint);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        direction: rtl;
-        text-align: left;
-        min-height: 15px;
-      }
+      /*
+       * 进度只留「阶段 + 百分比 + 一根条」。
+       * 早期版本还显示「82 / 128 个文件」「169 MB / 265 MB」和正在复制的文件名 ——
+       * 那是给排障看的，安装的时候没人读它，只会让一屏干净的东西变吵。
+       */
 
       /* ---- 结果 ---- */
       .result {
         display: none;
         text-align: center;
-        padding: 30px 20px 10px;
+        max-width: 430px;
       }
 
       .result.on {
         display: block;
       }
 
-      .result .icon {
-        width: 56px;
-        height: 56px;
-        margin: 0 auto 18px;
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 26px;
-        font-weight: 600;
-      }
-
-      .result .icon.ok {
-        background: #e8f7ee;
-        color: var(--ok);
-      }
-
-      .result .icon.err {
-        background: #fdecec;
-        color: var(--err);
-      }
-
       .result h2 {
-        margin: 0 0 10px;
-        font-size: 16px;
+        margin: 0 0 9px;
+        font-size: 15px;
         font-weight: 600;
+        color: var(--fg);
+      }
+
+      .result h2.err {
+        color: var(--err);
       }
 
       .result .detail {
         margin: 0;
-        font-size: 12.5px;
-        color: var(--fg-muted);
+        font-size: 12px;
         line-height: 1.75;
-        word-break: break-all;
-        /* 错误信息可能带换行，保留 */
+        color: var(--fg-soft);
         white-space: pre-wrap;
-        text-align: left;
-        max-width: 460px;
-        margin-left: auto;
-        margin-right: auto;
+        word-break: break-all;
+        user-select: text;
       }
 
-      /* ---- 底部按钮 ---- */
-      .footer {
-        flex: 0 0 auto;
-        display: flex;
-        justify-content: flex-end;
-        gap: 10px;
-        padding: 18px 0 26px;
-        border-top: 1px solid var(--border);
+      /* ---- 唯一的行动按钮：黑色胶囊 ---- */
+      .cta {
+        height: 52px;
+        padding: 0 24px;
+        border: 0;
+        border-radius: 16px;
+        background: #0a0a0a;
+        color: #fff;
+        font-family: inherit;
+        font-size: 16px;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        box-shadow: 0 6px 18px -6px rgba(0, 0, 0, 0.35);
+        transition:
+          background 0.15s ease,
+          transform 0.15s cubic-bezier(0.2, 0.8, 0.3, 1),
+          box-shadow 0.15s ease;
+      }
+
+      .cta:hover:not(:disabled) {
+        background: #1f1f1f;
+        transform: translateY(-1px);
+        box-shadow: 0 12px 26px -8px rgba(0, 0, 0, 0.42);
+      }
+
+      .cta:active:not(:disabled) {
+        transform: translateY(0) scale(0.985);
+      }
+
+      .cta:disabled {
+        background: #dcdcdc;
+        color: #fff;
+        box-shadow: none;
+        cursor: default;
+      }
+
+      .ver {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 16px;
+        text-align: center;
+        font-size: 11px;
+        color: #cccccc;
+        font-variant-numeric: tabular-nums;
+        pointer-events: none;
       }
     </style>
   </head>
   <body>
-    <button class="winbtn close" id="winclose" title="关闭">✕</button>
+    <div class="titlebar">
+      <button class="winbtn" id="winmin" title="最小化" aria-label="最小化">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <path d="M1 5h8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" />
+        </svg>
+      </button>
+      <button class="winbtn" id="winclose" title="关闭" aria-label="关闭">
+        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+          <path
+            d="M1.4 1.4l7.2 7.2M8.6 1.4l-7.2 7.2"
+            stroke="currentColor"
+            stroke-width="1.1"
+            stroke-linecap="round"
+          />
+        </svg>
+      </button>
+    </div>
 
-    <div id="app">
-      <div class="header">
-        <div class="logo">
-          <!--
-            直接用应用的真实图标（resources/icon.png，512×512），
-            不手画 SVG。
-            早先我手画了个「圆环 + C」，和真正的图标（蓝色圆角方块 +
-            带缺口的字母 C）差得很远 —— 用户一眼就看出来了。
-            图片是矢量级的高分图，任何缩放都清晰。
-          -->
-          <img src="icon.png" alt="" width="52" height="52" />
+    <main id="app">
+      <div class="brand">
+        <!--
+          用应用的真实图标裁成圆形，不手画 —— 手绘版和真图标差太远（踩过）。
+          圆形 + 顶部高光 + 外发光，是这一版视觉的落点。
+        -->
+        <div class="orb"><img src="icon.png" alt="" /></div>
+        <div class="lockup">
+          <span class="mark">cv</span>
+          <span class="tag">Studio</span>
         </div>
-        <div>
-          <h1 id="title">CV Studio</h1>
-          <p class="sub">STM32 / CMake 工程的配置与调试文件生成器</p>
-        </div>
-        <span class="ver" id="ver">v—</span>
       </div>
-      <div class="divider"></div>
 
-      <div class="body">
-        <!-- 表单 -->
-        <div id="form">
-          <div class="field">
-            <div class="field__label">安装位置</div>
-            <div class="row">
-              <input type="text" id="dir" spellcheck="false" />
-              <button id="pick">浏览…</button>
-            </div>
+      <div class="slot">
+        <!-- 默认状态：一行可点的文字 -->
+        <button class="pick-text" id="openPicker">选择安装位置</button>
+
+        <!-- 点开后：路径 + 快捷方式选项 -->
+        <div class="picker" id="picker">
+          <div class="pathrow">
+            <input type="text" id="dir" spellcheck="false" />
+            <button class="sq" id="pick">选择</button>
           </div>
-
-          <div class="field">
-            <div class="field__label">快捷方式</div>
-            <div class="checks">
-              <label class="check">
-                <input type="checkbox" id="desktop" checked />
-                在桌面创建快捷方式
-              </label>
-              <label class="check">
-                <input type="checkbox" id="startmenu" checked />
-                在开始菜单创建快捷方式
-              </label>
-            </div>
+          <div class="opts">
+            <label class="chk"><input type="checkbox" id="desktop" checked /><span>桌面快捷方式</span></label>
+            <label class="chk"><input type="checkbox" id="startmenu" checked /><span>开始菜单快捷方式</span></label>
           </div>
         </div>
 
-        <!-- 进度 -->
-        <div class="progress-wrap" id="progress">
-          <div class="progress-head">
-            <span class="stage" id="stage">准备中</span>
+        <!-- 安装中 -->
+        <div class="progress" id="progress">
+          <div class="pline">
+            <span id="stage">准备中</span>
             <span class="pct" id="pct">0%</span>
           </div>
           <div class="bar"><div class="bar__fill" id="fill"></div></div>
-          <div class="progress-meta">
-            <span id="count"></span>
-            <span id="bytes"></span>
-          </div>
-          <div class="current-file" id="current"></div>
         </div>
 
         <!-- 结果 -->
         <div class="result" id="result">
-          <div class="icon ok" id="resIcon">✓</div>
           <h2 id="resTitle"></h2>
           <p class="detail" id="resText"></p>
         </div>
       </div>
 
-      <div class="footer">
-        <button id="cancel">取消</button>
-        <button id="action" class="primary">安装</button>
-      </div>
-    </div>
+      <button class="cta" id="action">立即安装</button>
+
+      <div class="ver" id="ver">v—</div>
+    </main>
 
     <script>
       const $ = (id) => document.getElementById(id)
-      const api = window.installer
+
+      /*
+       * 浏览器里直接打开这个文件时，preload 注入的 api 不存在 ——
+       * 给一套假数据，界面照样能看、能点、能走完整流程。
+       * 打包后的安装器里 window.installer 一定存在，这段永远不生效。
+       */
+      function previewApi() {
+        let handler = null
+        return {
+          defaults: async () => ({
+            dir: 'C:\\Users\\PoXia\\AppData\\Local\\Programs\\CV Studio',
+            version: '2.0.2',
+            productName: 'CV Studio',
+            payloadFiles: 128
+          }),
+          pickDir: async () => null,
+          onProgress: (h) => {
+            handler = h
+            return () => {
+              handler = null
+            }
+          },
+          install: async (opts) => {
+            const push = (p) =>
+              handler &&
+              handler({
+                stage: p.stage,
+                percent: p.percent,
+                current: p.current,
+                done: p.done,
+                total: 128,
+                bytesDone: (p.percent / 100) * 265 * 1048576,
+                bytesTotal: 265 * 1048576
+              })
+            for (let i = 0; i <= 100; i += 2) {
+              push({
+                stage: '复制文件',
+                percent: i,
+                current: 'resources\\app.asar',
+                done: Math.round((i / 100) * 128)
+              })
+              await new Promise((r) => setTimeout(r, 28))
+            }
+            return { ok: true, dir: opts.dir, exe: 'CV Studio.exe', seconds: 6.2 }
+          },
+          launch: () => {},
+          quit: () => {}
+        }
+      }
+
+      const api = window.installer || previewApi()
 
       let state = 'idle'
       let installedExe = null
-
-      function fmtBytes(n) {
-        if (!n) return ''
-        if (n < 1024) return n + ' B'
-        if (n < 1048576) return (n / 1024).toFixed(0) + ' KB'
-        if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB'
-        return (n / 1073741824).toFixed(2) + ' GB'
-      }
 
       api.onProgress((p) => {
         $('stage').textContent = p.stage
@@ -505,35 +573,33 @@
         const indet = p.stage === '准备中' || p.stage === '清理旧版本'
         fill.classList.toggle('indet', indet)
         if (!indet) fill.style.width = Math.min(100, Math.max(0, p.percent)) + '%'
-
-        $('count').textContent = p.total > 0 ? p.done + ' / ' + p.total + ' 个文件' : ''
-        $('bytes').textContent =
-          p.bytesTotal > 0 ? fmtBytes(p.bytesDone) + ' / ' + fmtBytes(p.bytesTotal) : ''
-        $('current').textContent = p.current || ''
       })
 
       async function init() {
         const d = await api.defaults()
-        $('title').textContent = d.productName
         $('ver').textContent = 'v' + d.version
         $('dir').value = d.dir
         document.title = d.productName + ' 安装程序'
       }
+
+      $('openPicker').addEventListener('click', () => {
+        $('openPicker').style.display = 'none'
+        $('picker').classList.add('on')
+        $('dir').focus()
+        $('dir').setSelectionRange($('dir').value.length, $('dir').value.length)
+      })
 
       $('pick').addEventListener('click', async () => {
         const d = await api.pickDir()
         if (d) $('dir').value = d
       })
 
+      // 关窗口 / 最小化。安装进行中不允许关 —— 半截退出会留下残缺目录
       $('winclose').addEventListener('click', () => {
         if (state === 'installing') return
         api.quit()
       })
-
-      $('cancel').addEventListener('click', () => {
-        if (state === 'installing') return
-        api.quit()
-      })
+      $('winmin').addEventListener('click', () => window.installer && api.minimize())
 
       $('action').addEventListener('click', async () => {
         if (state === 'done') {
@@ -547,18 +613,24 @@
         }
         if (state === 'installing') return
 
+        /*
+         * 点「立即安装」就直接装，不再弹别的东西。
+         * 装到哪儿由输入框决定 —— 默认值 init() 里就填好了，
+         * 用户没动过就是默认目录。要看/改路径才去点上面那行「选择安装位置」。
+         */
         const dir = $('dir').value.trim()
         if (!dir) {
+          $('openPicker').click()
           $('dir').focus()
           return
         }
 
         state = 'installing'
-        $('form').style.display = 'none'
+        $('picker').style.display = 'none'
         $('progress').classList.add('on')
         $('action').disabled = true
-        $('action').textContent = '正在安装…'
-        $('cancel').style.display = 'none'
+        $('action').textContent = '正在安装'
+        $('winclose').disabled = true
 
         const r = await api.install({
           dir,
@@ -568,17 +640,15 @@
 
         $('progress').classList.remove('on')
         $('action').disabled = false
-        $('cancel').style.display = ''
+        $('winclose').disabled = false
 
-        /*
-         * 用户主动点了「取消安装」—— 退回表单页，不显示失败。
-         * 那是他的选择，不是出错。
-         */
+        // 用户自己点了「取消安装」不是出错，退回表单
         if (r.cancelled) {
           state = 'idle'
-          $('form').style.display = ''
-          $('action').textContent = '安装'
-          $('cancel').textContent = '取消'
+          $('picker').classList.remove('on')
+          $('picker').style.display = ''
+          $('openPicker').style.display = ''
+          $('action').textContent = '立即安装'
           return
         }
 
@@ -587,20 +657,16 @@
         if (r.ok) {
           state = 'done'
           installedExe = r.exe
-          $('resIcon').className = 'icon ok'
-          $('resIcon').textContent = '✓'
+          $('resTitle').className = ''
           $('resTitle').textContent = '安装完成'
-          $('resText').textContent = '已安装到：\n' + r.dir + '\n用时 ' + r.seconds + ' 秒'
+          $('resText').textContent = r.dir + '\n用时 ' + r.seconds + ' 秒'
           $('action').textContent = '立即运行'
-          $('cancel').textContent = '关闭'
         } else {
           state = 'failed'
-          $('resIcon').className = 'icon err'
-          $('resIcon').textContent = '✕'
+          $('resTitle').className = 'err'
           $('resTitle').textContent = '安装失败'
           $('resText').textContent = r.error || '未知错误'
           $('action').textContent = '重试'
-          $('cancel').textContent = '关闭'
         }
       })
 

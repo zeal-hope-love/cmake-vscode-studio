@@ -91,10 +91,72 @@ function Numbered(props: { n: number; title: string; desc: React.ReactNode; done
 import { AboutInfo } from './AboutInfo'
 
 // --------------------------------------------------------------------------
-// 六步内容
+// 七步内容（第一页是 AI 声明，从 2.0.2 起）
 // --------------------------------------------------------------------------
 
 const STEPS: Step[] = [
+  {
+    title: '先说清楚：这是 AI 写的软件',
+    subtitle: '代码、界面、文案、文档全部由 AI 编程助手生成 —— 用之前请先看这一页',
+    body: (
+      <>
+        <div className="alert alert--warn" style={{ marginBottom: 14 }}>
+          <span className="alert__icon">🤖</span>
+          <div>
+            这个工具<b>没有一行是人手敲的</b>。需求、验收、真机测试由作者负责，
+            具体实现由 AI 编程助手（对话里逐条写代码的那种）完成。
+            你现在看的这份引导、README、发布说明，同样是它写的。
+          </div>
+        </div>
+
+        <div className="grid grid--2" style={{ marginBottom: 12 }}>
+          <div className="card" style={{ marginBottom: 0 }}>
+            <div className="card__head">
+              <span className="card__title">好处</span>
+            </div>
+            <div className="card__body small" style={{ lineHeight: 1.8 }}>
+              <div>· 迭代快：哪里别扭，说一声就能改</div>
+              <div>· 文档和代码同步，不会写着写着对不上</div>
+              <div>· 不藏私：所有逻辑都能在仓库里查到</div>
+            </div>
+          </div>
+          <div className="card" style={{ marginBottom: 0 }}>
+            <div className="card__head">
+              <span className="card__title">代价</span>
+              <div className="card__actions">
+                <Badge kind="warn">重点看这段</Badge>
+              </div>
+            </div>
+            <div className="card__body small" style={{ lineHeight: 1.8 }}>
+              <div>
+                · <b>它会在没人注意的地方出错</b>，而且错得很自信
+              </div>
+              <div>· 遇到它没见过的工程结构，判断容易想当然</div>
+              <div>· 生成的配置能跑通，不等于在你的板子上跑得对</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="small" style={{ lineHeight: 1.9 }}>
+          <div className="bold mb-8">最可能出错的三个地方</div>
+          <div>
+            · 芯片型号 / OpenOCD target 判错 → 调试连不上，或者连到了不该连的核
+          </div>
+          <div>· 工具链没探测到 → 构建任务报「找不到 arm-none-eabi-gcc」</div>
+          <div>· 不是 STM32、也不用 CubeMX 的工程，按「通用 CMake」兜底，细节未必贴合</div>
+        </div>
+
+        <div className="alert alert--accent" style={{ marginTop: 14, marginBottom: 0 }}>
+          <span className="alert__icon">🛡</span>
+          <div>
+            三条自保：<b>①</b> 写入前看差异预览，别闭眼点确认；<b>②</b>{' '}
+            勾上「写入前备份原文件」；<b>③</b> 新工程第一次用，先确认它在 git 里或者有副本。
+            真出问题，把「关于与版本」那一页的信息贴到 GitHub Issues。
+          </div>
+        </div>
+      </>
+    )
+  },
   {
     title: '它到底改什么',
     subtitle: '只写工程里的 .vscode 配置，不碰你的源码和 CMakeLists.txt',
@@ -179,25 +241,21 @@ const STEPS: Step[] = [
   },
   {
     title: '侧边栏这几栏分别在干嘛',
-    subtitle: '带 ★ 的是你多半要看的；分组依据只有一个：这页需不需要先选工程',
+    subtitle: '分四组：工程 = 这一个工程本身；配置 = 它生成的配置；扩展 = 往工程里装东西；系统 = 应用与机器',
     body: (
       <div className="onboard-table">
         {[
-          ['配置调试文件', '★ 选工程、看检测结果、写入配置', '每天都会用到'],
-          ['调试 launch.json', 'F5 下拉框里有哪些配置', '要加自定义调试配置时才来'],
-          ['任务 tasks.json', 'Ctrl+Shift+B 的任务', '要加构建/烧录任务时才来'],
-          ['设置 settings.json', 'OpenOCD 路径、cmake 配置等', '工具路径没探测到时来'],
-          ['IntelliSense', '代码跳转、补全', '发现跳转不准时来'],
-          ['构建与烧录', '不离开工具就能编译、烧录', '想在这儿一键烧录时用'],
-          ['检查与清理', '检测到的问题、清除配置、还原', '配置写坏了想退回时来'],
-          [
-            '模板与配置',
-            '不依赖工程新建/编辑模板，直接改四份文件内容',
-            '有好几个工程、或想攒一套标准配置时'
-          ],
-          ['工具与路径', '探测到的工具、探针选择', '换调试器 / 换电脑时来（不需要先选工程）'],
-          ['历史记录', '做过什么 + 每条都能直接再来一次', '想「重新配置那个工程」时不用翻目录'],
-          ['关于与版本', '版本号、运行环境、数据目录', '反馈问题时来']
+          ['工程 · 配置调试文件', '★ 选工程、看检测结果、写入配置', '每天都会用到'],
+          ['工程 · 检查与清理', '体检 + 一键修复（工程改名、陈旧产物…）', '配置写坏了、或者觉得哪儿不对'],
+          ['工程 · 源文件管理', '图形化改 CMakeLists.txt 的源文件列表', '有 .c 文件没被编译进去时'],
+          ['工程 · 构建与烧录', '不离开工具就能编译、烧录、看实时日志', '想在这儿一键烧录时'],
+          ['配置 · VSCode 配置', '四个 JSON 的可视化编辑（launch / tasks / settings / cpp）', '要手改某个具体字段时'],
+          ['配置 · 探针与芯片', 'device、适配器速度、SVD、Live Watch', '换调试器、或者调试连不上时'],
+          ['配置 · 模板', '整套配置存下来，套到别的工程', '好几个工程想用同一套配置'],
+          ['扩展 · 模块包', '目前是 VOFA+ 在线调参', '要在板子跑着的时候调 PID'],
+          ['系统 · 工具链与路径', '探测到的工具、手动指定路径', '换电脑、或工具没探测到时'],
+          ['系统 · 历史与恢复', '做过什么 + 每条都能再来一次 + 快照还原', '想「把那个工程照上次再配一遍」'],
+          ['关于与版本', '版本号、运行环境、数据目录、检查更新', '反馈问题时来']
         ].map(([name, what, when]) => (
           <div key={name} className="onboard-table__row">
             <div className="bold small">{name}</div>

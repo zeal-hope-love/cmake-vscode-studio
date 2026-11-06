@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "启动并调试（主进程）",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "npm",
+      "windows": { "runtimeExecutable": "npm.cmd" },
+      "runtimeArgs": ["run", "dev:debug"],
+      "console": "integratedTerminal",
+      "autoAttachChildProcesses": true,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "presentation": { "hidden": false, "group": "启动" }
+    },
+    {
+      "name": "调试渲染进程（attach 9222，需已启动）",
+      "type": "chrome",
+      "request": "attach",
+      "port": 9222,
+      "address": "127.0.0.1",
+      "webRoot": "${workspaceFolder}/src/renderer",
+      "sourceMaps": true,
+      "pathMapping": { "/": "${workspaceFolder}/src/renderer" },
+      "timeout": 60000,
+      "presentation": { "hidden": false, "group": "附加" }
+    }
+  ],
+  "compounds": []
+}

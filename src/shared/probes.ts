@@ -5,7 +5,7 @@
  * OpenOCD interface 配置，两边必须完全一致。
  */
 
-import type { ProbeKey, ProbeOption } from './types'
+import type { ProbeKey, ProbeOption } from './types/index'
 
 export const PROBE_OPTIONS: ProbeOption[] = [
   {

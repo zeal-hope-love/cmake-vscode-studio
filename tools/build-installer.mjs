@@ -26,13 +26,24 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-const staging = join(root, '.installer-build')
+/*
+ * 暂存目录可以用环境变量换个地方。
+ *
+ * 平时用默认的 .installer-build 就行；但那个目录每次都要整棵删掉重来，
+ * 万一里面有文件被别的进程占着（杀软扫描、同步盘、上一次打包崩在中途），
+ * 删除会 EBUSY，整条流水线直接挂在这一步 —— 这时换个干净目录就能继续：
+ *
+ *   CVSTUDIO_STAGING=.installer-build2 npm run dist:setup
+ */
+const staging = process.env.CVSTUDIO_STAGING
+  ? resolve(root, process.env.CVSTUDIO_STAGING)
+  : join(root, '.installer-build')
 const unpacked = join(root, 'release', 'win-unpacked')
 
 function step(msg) {
@@ -217,7 +228,14 @@ rmSync(trimmedDir, { recursive: true, force: true })
  * 注意不要把安装器本身也做成 nsis：那正是要替换掉的老式向导。
  */
 step('打包安装器 exe（portable 外壳）')
-const installerOut = join(root, 'release', 'installer')
+/*
+ * 中间产物（安装器外壳的 win-unpacked、块映射文件等）也放进暂存目录。
+ *
+ * 以前放在 release/installer，好处是能翻出来看，坏处是下一次打包要先把它删干净 ——
+ * 而那个目录里的 app.asar 一旦被别的进程占住（杀软、同步盘），删除就 EBUSY，
+ * 打包会在最后一步无谓地失败。暂存目录本来就是一次性的，放这儿最省事。
+ */
+const installerOut = join(staging, 'out')
 
 /*
  * 用**配置文件**而不是命令行参数。

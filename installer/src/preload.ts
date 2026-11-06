@@ -25,6 +25,7 @@ export interface InstallerApi {
   }): Promise<{ ok: boolean; dir?: string; exe?: string; seconds?: number; error?: string }>
   onProgress(handler: (p: InstallProgress) => void): () => void
   launch(exe: string): void
+  minimize(): void
   quit(): void
 }
 
@@ -39,6 +40,7 @@ const api: InstallerApi = {
     return () => ipcRenderer.removeListener('installer:progress', wrapped)
   },
   launch: (exe) => void ipcRenderer.invoke('installer:launch', exe),
+  minimize: () => void ipcRenderer.invoke('installer:minimize'),
   quit: () => void ipcRenderer.invoke('installer:quit')
 }
 

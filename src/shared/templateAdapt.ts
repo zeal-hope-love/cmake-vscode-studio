@@ -11,7 +11,7 @@
  * 单工程套用和多工程批量都走这一个函数，避免两处逻辑漂移。
  */
 
-import type { GenOptions } from './types'
+import type { GenOptions } from './types/index'
 
 /**
  * 从模板沿用、与目标工程无关的参数。
@@ -36,6 +36,11 @@ export function adaptTemplateOptions(template: Partial<GenOptions>, base: GenOpt
 
     // ---- 用户选择（以模板为准，空值回退到 base）----
     probeKey: template.probeKey || base.probeKey,
+    // 调试器组合是「用户选择」：模板里存过就用模板的，否则跟 base
+    debugTargets:
+      Array.isArray(template.debugTargets) && template.debugTargets.length
+        ? template.debugTargets
+        : base.debugTargets,
     interfaceCfg: template.interfaceCfg || base.interfaceCfg,
     resetConfig:
       template.resetConfig !== undefined && template.resetConfig !== null

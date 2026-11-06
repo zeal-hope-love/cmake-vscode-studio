@@ -1,0 +1,9 @@
+{
+  "recommendations": [
+    "usernamehw.errorlens",
+    "esbenp.prettier-vscode"
+  ],
+  "unwantedRecommendations": [
+    "ms-vscode.vscode-typescript-tslint-plugin"
+  ]
+}

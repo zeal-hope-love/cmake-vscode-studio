@@ -25,6 +25,9 @@
 #define VOFA_UART_HEADER        "${UART_HEADER}"
 #define VOFA_TX_HEADER          "${TX_HEADER}"
 #define VOFA_UART               ${UART}
+/* 波特率只作记录：真正的串口参数在 Src/usart.c 里（由 CubeMX 生成）。
+   模块运行时不会去改它 —— 两边不一致时，收到的会是乱码而不是报错。 */
+#define VOFA_BAUD               ${BAUD}u
 #define VOFA_IRQ_N              ${IRQ}
 #define VOFA_IRQ_HANDLER        ${IRQ_HANDLER}
 #define VOFA_IRQ_PRIORITY       ${IRQ_PRIORITY}u
@@ -43,6 +46,12 @@
    逐字节够用的理由：调参命令是人手敲的，一次几十字节。 */
 #define VOFA_RX_MODE            ${RX_MODE}
 #define VOFA_RX_DMA_HANDLE      ${RX_DMA}
+
+/* RX DMA 是循环还是单次 —— 必须和 .ioc 里 Dma.<外设>_RX.<槽>.Mode 一致。
+   1 = CIRCULAR：DMA 一直跑，空闲中断里按「上次偏移 → 本次偏移」取增量，没有空窗
+   0 = NORMAL  ：一次空闲/完成事件后 DMA 就停，回调里必须重新挂（本文件已处理）
+   工具改 .ioc 时会同时改这里，两边对不上就会出现「第一条命令能收到、之后全没反应」。 */
+#define VOFA_RX_DMA_CIRCULAR    ${RX_DMA_CIRCULAR}
 
 /* 是否由模块自己开 NVIC 并自带中断入口。
    1 = CubeMX 里没勾这个串口的全局中断，模块运行时自己补上（**装完即用**）

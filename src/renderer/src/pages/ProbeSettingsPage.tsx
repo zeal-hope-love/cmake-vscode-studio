@@ -19,21 +19,8 @@ import React from 'react'
 import { useStudio } from '../state/store'
 import { probeByKey, PROBE_OPTIONS } from '@shared/probes'
 import { mapOpenocdTarget, openocdCfgFileName, targetCfgOptions } from '@shared/chipTargets'
-import type { GenOptions } from '@shared/types'
-import {
-  Alert,
-  Button,
-  Card,
-  Checkbox,
-  Field,
-  Kv,
-  PageBody,
-  PageHeader,
-  Select,
-  TextInput
-} from '../components/ui'
+import { Alert, Button, Card, Checkbox, Field, Kv, PageBody, PageHeader, Select, TextInput } from '../components/ui'
 import { NoProject } from '../components/NoProject'
-import { Icons } from '../components/icons'
 
 export default function ProbeSettingsPage(): React.JSX.Element {
   const project = useStudio((s) => s.project)

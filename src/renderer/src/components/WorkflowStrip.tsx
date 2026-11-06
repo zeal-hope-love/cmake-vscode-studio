@@ -10,9 +10,20 @@
 
 import React from 'react'
 import { useProjectWritten, useStudio } from '../state/store'
-import { Button, Spinner } from './ui'
+import { Button, Checkbox, Spinner } from './ui'
 import { Icons } from './icons'
 import { probeByKey } from '@shared/probes'
+import { DEBUG_TARGET_OPTIONS, DEFAULT_DEBUG_TARGETS } from '@shared/debugTargets'
+import type { DebugTargetKey } from '@shared/types'
+
+/**
+ * 下拉里「自定义」那一项的 value。
+ *
+ * 用一个不可能撞上模板 id 的串 —— 模板 id 要么是 `builtin:` 前缀，要么是 uuid。
+ * 不能用空串：空串已经是「默认（按检测结果生成）」了。
+ */
+const CUSTOM_TARGETS_VALUE = '__custom_debug_targets__'
+
 export function WorkflowStrip(): React.JSX.Element {
   const project = useStudio((s) => s.project)
   const bundle = useStudio((s) => s.bundle)
@@ -24,9 +35,29 @@ export function WorkflowStrip(): React.JSX.Element {
   const busy = useStudio((s) => s.busy)
   const openPreview = useStudio((s) => s.openPreview)
   const setPage = useStudio((s) => s.setPage)
+  const setDebugTargets = useStudio((s) => s.setDebugTargets)
   const written = useProjectWritten()
 
+  /** 「自定义调试器组合」窗格是否展开 */
+  const [targetsOpen, setTargetsOpen] = React.useState(false)
+
   const probe = options ? probeByKey(options.probeKey) : null
+  const debugTargets: DebugTargetKey[] = options?.debugTargets ?? DEFAULT_DEBUG_TARGETS
+
+  /** 勾选/取消一个调试器。至少留一条 —— 空列表生成出来没有可调试项 */
+  const toggleTarget = (key: DebugTargetKey, on: boolean): void => {
+    setDebugTargets(on ? [...debugTargets, key] : debugTargets.filter((k) => k !== key))
+  }
+
+  /** 下拉切换：可能是模板，也可能是「自定义」 */
+  const onPickTemplate = (value: string): void => {
+    if (value === CUSTOM_TARGETS_VALUE) {
+      setTargetsOpen(true)
+      return
+    }
+    setTargetsOpen(false)
+    void switchTemplate(value)
+  }
 
   /** 回到第一步：把选择器展开、滚到「选择工程」卡片并聚焦输入框 */
   const backToPickProject = (): void => {
@@ -160,8 +191,8 @@ export function WorkflowStrip(): React.JSX.Element {
             <select
               className="select workflow__template"
               aria-label="生成参数来源（模板）"
-              value={activeTemplate?.id ?? ''}
-              onChange={(e) => void switchTemplate(e.target.value)}
+              value={targetsOpen ? CUSTOM_TARGETS_VALUE : (activeTemplate?.id ?? '')}
+              onChange={(e) => onPickTemplate(e.target.value)}
               title="选「默认」= 按本工程的检测结果生成；选模板 = 用模板里的选择"
             >
               <option value="">默认：按本工程的检测结果生成</option>
@@ -170,11 +201,68 @@ export function WorkflowStrip(): React.JSX.Element {
                   {t.builtin ? `${t.name}（内置样板）` : t.name}
                 </option>
               ))}
+              <option value={CUSTOM_TARGETS_VALUE}>
+                自定义：自己勾选生成哪几条调试配置…
+              </option>
             </select>
             <button type="button" className="linkbtn" onClick={() => setPage('templates')}>
               管理模板
             </button>
           </div>
+
+          {/*
+            自定义调试器组合的窗格。
+
+            为什么不塞进模板里：模板是「一份可命名、可保存、可复制的快照」，
+            而这里勾的是**一个设置**（写进 settings.json，换工程也还在）。
+            两者正交 —— 选模板换的是探针/速度，勾这里换的是 launch.json 里放几条。
+          */}
+          {targetsOpen && (
+            <div
+              style={{
+                marginTop: 8,
+                padding: '10px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                background: 'var(--panel)'
+              }}
+            >
+              <div className="faint small" style={{ marginBottom: 8, lineHeight: 1.7 }}>
+                这几条会<b>同时</b>写进 <span className="mono">launch.json</span>，
+                在 VSCode「运行和调试」下拉里各占一项 —— 插哪个探针就选哪条，不用改文件。
+                选择会记住，换工程也还在。
+              </div>
+
+              <div style={{ display: 'grid', gap: 6 }}>
+                {DEBUG_TARGET_OPTIONS.map((opt) => (
+                  <Checkbox
+                    key={opt.key}
+                    checked={debugTargets.includes(opt.key)}
+                    onChange={(on) => toggleTarget(opt.key, on)}
+                    label={
+                      <span className="small">
+                        <b>{opt.label}</b>
+                        <br />
+                        <span style={{ opacity: 0.72 }}>{opt.hint}</span>
+                      </span>
+                    }
+                  />
+                ))}
+              </div>
+
+              <div
+                className="faint small"
+                style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}
+              >
+                <span style={{ flex: 1 }}>
+                  至少留一条 —— 一条都不勾会退回到「当前探针」，否则没有可调试项。
+                </span>
+                <Button size="sm" onClick={() => setTargetsOpen(false)}>
+                  收起
+                </Button>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

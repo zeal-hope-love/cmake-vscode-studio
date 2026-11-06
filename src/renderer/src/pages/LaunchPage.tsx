@@ -8,8 +8,9 @@
 
 import React from 'react'
 import { useStudio } from '../state/store'
+import { DEBUG_TARGET_OPTIONS, debugTargetConfigName, normalizeDebugTargets } from '@shared/debugTargets'
 import { probeByKey } from '@shared/probes'
-import type { LaunchConfig } from '@shared/types'
+import type { DebugTargetKey, LaunchConfig } from '@shared/types'
 import {
   Alert,
   Badge,
@@ -28,74 +29,29 @@ import {
 import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
 import { SplitPane } from '../components/Resizable'
-
-/** VSCode 工作区变量，生成的配置里统一用它 */
-const WS = '${workspaceFolder}'
-
-/** 「其它」是个哨兵值：选中它时用输入框自由填写 type */
-const OTHER = '其它'
-
-const TYPE_OPTIONS = ['cortex-debug', 'cppdbg', 'cppvsdbg', 'node']
-const REQUEST_OPTIONS = ['launch', 'attach']
-const SERVERTYPE_OPTIONS = ['openocd', 'jlink', 'stlink', 'pyocd', 'bmp', 'external']
-const MIMODE_OPTIONS = ['gdb', 'lldb']
-const INTERFACE_OPTIONS = ['SWD', 'JTAG']
-
-type TemplateId = 'flash' | 'debugOnly' | 'attach' | 'native' | 'blank'
-
-const TEMPLATES: Array<{ id: TemplateId; label: string }> = [
-  { id: 'flash', label: '嵌入式：烧录并调试（停在 main）' },
-  { id: 'debugOnly', label: '嵌入式：仅调试（不重新烧录）' },
-  { id: 'attach', label: '嵌入式：附加到运行中的目标' },
-  { id: 'native', label: '本机：gdb 调试' },
-  { id: 'blank', label: '空白配置' }
-]
-
-type TabKey = 'form' | 'raw'
-
-// --------------------------------------------------------------------------
-// 读写小工具
-// --------------------------------------------------------------------------
-
-/** 把配置里的任意值读成字符串 */
-function text(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  return ''
-}
-
-/** 把字符串数组读成多行文本 */
-function lines(value: unknown): string {
-  return Array.isArray(value) ? value.map((v) => String(v)).join('\n') : ''
-}
-
-/** 多行文本 → 字符串数组（空行忽略） */
-function splitLines(input: string): string[] {
-  return input
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-}
-
-/** 写一个字段；空值（undefined / null / 空串）表示删除该键，让 JSON 保持干净 */
-function setKey<T extends Record<string, unknown>>(obj: T, key: string, value: unknown): T {
-  const draft: Record<string, unknown> = { ...obj }
-  if (value === undefined || value === null || value === '') delete draft[key]
-  else draft[key] = value
-  return draft as T
-}
-
-/** 写一个数组字段；空数组同样删除该键 */
-function setList<T extends Record<string, unknown>>(obj: T, key: string, list: unknown[]): T {
-  return list.length ? setKey(obj, key, list) : setKey(obj, key, undefined)
-}
-
-/** 基础下拉项；当前值不在表里时补一项，避免下拉框显示空白 */
-function withCurrent(base: string[], current: string): Array<{ value: string; label: string }> {
-  const options = base.map((v) => ({ value: v, label: v }))
-  if (current && !base.includes(current)) options.push({ value: current, label: `其它（${current}）` })
-  return options
-}
+import {
+  INTERFACE_OPTIONS,
+  MIMODE_OPTIONS,
+  OTHER,
+  REQUEST_OPTIONS,
+  SERVERTYPE_OPTIONS,
+  TEMPLATES,
+  TYPE_OPTIONS,
+  lines,
+  setKey,
+  setList,
+  splitLines,
+  text,
+  withCurrent,
+  WS,
+  type TabKey,
+  type TemplateId
+} from './launch/meta'
+import {
+  buildTargetConfig as buildTargetConfigOf,
+  buildTemplate as buildTemplateOf,
+  type LaunchBuildCtx
+} from './launch/build'
 
 // --------------------------------------------------------------------------
 
@@ -111,7 +67,12 @@ export default function LaunchPage(): React.JSX.Element {
   const [selected, setSelected] = React.useState(0)
   const [tab, setTab] = React.useState<TabKey>('form')
   const [templateOpen, setTemplateOpen] = React.useState(false)
-  const [templateId, setTemplateId] = React.useState<TemplateId>('flash')
+  const [templateId, setTemplateId] = React.useState<TemplateId>('dual')
+  /** 「自定义」模板里勾选的调试器；切走再切回来不丢 */
+  const [pickedTargets, setPickedTargets] = React.useState<DebugTargetKey[]>([
+    'probe',
+    'stlink-gdbserver'
+  ])
   const [rawText, setRawText] = React.useState('')
   const [rawError, setRawError] = React.useState<string | null>(null)
   const [typeOther, setTypeOther] = React.useState(false)
@@ -183,60 +144,66 @@ export default function LaunchPage(): React.JSX.Element {
   // 增删改排
   // ------------------------------------------------------------------------
 
-  /** 按模板造一个新配置；options / project 缺失时用保守的兜底值 */
-  const buildTemplate = (id: TemplateId): LaunchConfig => {
-    const debugDir = options?.debugDir || 'build/Debug'
-    const elfName = options?.elfName || project.elfName || 'firmware'
-    const device = options?.device || project.device || ''
-    const probe = probeByKey(options?.probeKey ?? 'cmsis-dap')
-    const cfgFile = bundle.openocdCfg?.fileName ?? null
+  /** 造配置用的上下文；options / project 变了就跟着变 */
+  const buildCtx: LaunchBuildCtx = {
+    options,
+    project,
+    openocdCfg: bundle.openocdCfg?.fileName ?? null
+  }
 
-    if (id === 'blank') {
-      return { name: '新配置', type: 'cppdbg', request: 'launch' }
+  const buildTemplate = (id: TemplateId): LaunchConfig => buildTemplateOf(id, buildCtx)
+  const buildTargetConfig = (target: DebugTargetKey): LaunchConfig =>
+    buildTargetConfigOf(target, buildCtx)
+
+  /**
+   * 按勾选的调试器批量追加配置。
+   *
+   * 同名已存在的跳过 —— 这样「双探针」和「自定义」两个入口反复点也不会堆重复项。
+   */
+  const addTargets = (targets: DebugTargetKey[], sourceLabel: string): void => {
+    const state = useStudio.getState()
+    const live = state.bundle
+    if (!live) return
+
+    const wanted = normalizeDebugTargets(targets)
+    const existing = new Set(live.launch.configurations.map((c) => text(c.name)))
+    const additions = wanted
+      .map((target) => buildTargetConfig(target))
+      .filter((c) => !existing.has(text(c.name)))
+
+    if (!additions.length) {
+      setTemplateOpen(false)
+      notify('warn', '这些调试配置已经在列表里了，没有新增')
+      return
     }
 
-    if (id === 'native') {
-      const base: LaunchConfig = {
-        name: 'C/C++: 调试 Debug',
-        type: 'cppdbg',
-        request: 'launch',
-        cwd: WS,
-        program: `${WS}/${debugDir}/${elfName}.exe`,
-        args: [],
-        stopAtEntry: false,
-        externalConsole: false,
-        MIMode: 'gdb'
-      }
-      const gdb = options?.toolchainDir
-        ? `${options.toolchainDir.replace(/\\/g, '/')}/arm-none-eabi-gdb.exe`
-        : ''
-      return gdb ? setKey(base, 'miDebuggerPath', gdb) : base
-    }
+    const list = [...live.launch.configurations, ...additions]
+    state.editBundle('launch', { ...live.launch, configurations: list })
+    setSelected(list.length - additions.length)
 
-    const isAttach = id === 'attach'
-    const name = isAttach
-      ? 'Debug: 附加到运行中的目标'
-      : id === 'debugOnly'
-        ? 'Debug: 仅调试（不重新烧录）'
-        : 'Debug: 烧录并调试（停在 main）'
+    // 记住这次的选择：以后换工程 / 「按当前参数重新生成全部配置」也会带上这几条。
+    // 放在 editBundle 之后，是因为 patchOptions 在「没有任何手动改动」时会静默重算，
+    // 那时 bundle 会被整体替换、把刚加的条目冲掉。
+    void state.saveSettings({ debugTargets: wanted })
+    state.patchOptions({ debugTargets: wanted })
 
-    let cfg: LaunchConfig = {
-      name,
-      type: 'cortex-debug',
-      request: isAttach ? 'attach' : 'launch',
-      servertype: probe.servertype,
-      cwd: WS,
-      executable: `${WS}/${debugDir}/${elfName}.elf`
-    }
-    if (device) cfg = setKey(cfg, 'device', device)
-    // 只有当本工具真的会写 openocd-*.cfg 时才引用它
-    if (cfgFile) cfg = setKey(cfg, 'configFiles', [`${WS}/.vscode/${cfgFile}`])
-    if (id === 'debugOnly') cfg = setKey(cfg, 'loadFiles', [])
-    if (!isAttach) cfg = setKey(cfg, 'runToEntryPoint', 'main')
-    return cfg
+    setTemplateOpen(false)
+    notify(
+      'ok',
+      `${sourceLabel}：新增 ${additions.length} 条 —— ${additions.map((c) => text(c.name)).join('、')}`
+    )
   }
 
   const addConfig = (): void => {
+    if (templateId === 'dual') {
+      addTargets(['probe', 'stlink-gdbserver'], '双探针')
+      return
+    }
+    if (templateId === 'custom') {
+      addTargets(pickedTargets, '自定义')
+      return
+    }
+
     const state = useStudio.getState()
     const live = state.bundle
     if (!live) return
@@ -346,7 +313,7 @@ export default function LaunchPage(): React.JSX.Element {
         <Field label="名称 (name)">
           <TextInput
             value={text(config.name)}
-            placeholder="例如 Debug: 烧录并调试（停在 main）"
+            placeholder="例如 CMSIS-DAP / DAP-Link：烧录并调试"
             onChange={(e) => setField('name', e.target.value)}
           />
         </Field>
@@ -597,7 +564,15 @@ export default function LaunchPage(): React.JSX.Element {
               <div className="bold mb-8">调试：按 F5</div>
               <div>
                 · 左侧点「运行和调试」图标（<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>）， 下拉选{' '}
-                <b>Debug: 烧录并调试（停在 main）</b>。
+                <b>{debugTargetConfigName('probe', probeByKey(options?.probeKey ?? 'cmsis-dap').label)}</b>
+                {configurations.some((c) => c.type === 'stlinkgdbtarget') ? (
+                  <>
+                    {' '}
+                    —— 插 ST-Link 时选那条 <b>ST-Link: …</b> 的。
+                  </>
+                ) : (
+                  '。'
+                )}
               </div>
               <div>
                 · 按 <kbd>F5</kbd>：先构建 → 烧录 → 停在 <span className="mono">main</span> 等你下断点。
@@ -691,8 +666,61 @@ export default function LaunchPage(): React.JSX.Element {
                     onChange={(e) => setTemplateId(e.target.value as TemplateId)}
                   />
                 </Field>
-                <Button size="sm" variant="primary" onClick={addConfig}>
-                  创建
+
+                {templateId === 'dual' && (
+                  <Alert kind="info">
+                    一次加两条：OpenOCD（DAP-Link 用）+ ST 官方 ST-Link GDB server。
+                    VSCode「运行和调试」下拉里插哪个选哪条，不用回来改配置。
+                  </Alert>
+                )}
+
+                {templateId === 'custom' && (
+                  <div style={{ display: 'grid', gap: 6 }}>
+                    {DEBUG_TARGET_OPTIONS.map((opt) => (
+                      <div
+                        key={opt.key}
+                        style={{
+                          padding: '6px 8px',
+                          border: '1px solid var(--border)',
+                          borderRadius: 6
+                        }}
+                      >
+                        <Checkbox
+                          checked={pickedTargets.includes(opt.key)}
+                          onChange={(on) =>
+                            setPickedTargets((prev) =>
+                              on
+                                ? prev.includes(opt.key)
+                                  ? prev
+                                  : [...prev, opt.key]
+                                : prev.filter((k) => k !== opt.key)
+                            )
+                          }
+                          label={
+                            <span className="small">
+                              <b>{opt.label}</b>
+                              <br />
+                              <span style={{ opacity: 0.72 }}>{opt.hint}</span>
+                            </span>
+                          }
+                        />
+                      </div>
+                    ))}
+                    {pickedTargets.length === 0 && (
+                      <Alert kind="warn">
+                        至少勾一个 —— 一条都不勾的话，生成出来的 launch.json 里就没有可调试项了。
+                      </Alert>
+                    )}
+                  </div>
+                )}
+
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={addConfig}
+                  disabled={templateId === 'custom' && pickedTargets.length === 0}
+                >
+                  {templateId === 'custom' || templateId === 'dual' ? '批量创建' : '创建'}
                 </Button>
               </div>
             )}

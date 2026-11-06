@@ -8,7 +8,7 @@
  * 生成之后用户可以逐份直接编辑 —— 这里给的只是「一个能用的起点」。
  */
 
-import type { GenOptions, TemplateFileKey, TemplateTarget } from './types'
+import type { GenOptions, TemplateFileKey, TemplateTarget } from './types/index'
 import { probeByKey } from './probes'
 
 const INDENT = 4

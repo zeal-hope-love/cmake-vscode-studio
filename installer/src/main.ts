@@ -626,13 +626,20 @@ ipcMain.handle('installer:launch', async (_e, exe: string) => {
   setTimeout(() => app.quit(), 800)
 })
 ipcMain.handle('installer:quit', () => app.quit())
+/** 自绘标题栏没有系统按钮，最小化要自己接 */
+ipcMain.handle('installer:minimize', () => win?.minimize())
 
 // --------------------------------------------------------------------------
 
 function createWindow(): void {
   win = new BrowserWindow({
-    width: 620,
-    height: 560,
+    /*
+     * 近正方形，对应界面的「一列居中」构图：
+     * 标志、字标、一行说明、黑色按钮，上下各留一大块白。
+     * 加宽只会让两侧多出空白，没有意义。
+     */
+    width: 560,
+    height: 600,
     resizable: false,
     maximizable: false,
     /*
@@ -640,13 +647,14 @@ function createWindow(): void {
      *
      * 用系统标题栏的话，浅色界面顶上会多一条深色条，和下面的内容割裂；
      * 而且窗口本身固定大小，系统那三个按钮也没什么用。
-     * 自绘之后整个窗口是一体的，也能贴一条细的边框阴影。
+     * 自绘之后整个窗口是一体的，右上角只留两个极轻的灰图标。
      */
     frame: false,
     titleBarStyle: 'hidden',
     title: `${meta.productName} 安装程序`,
-    backgroundColor: '#f3f3f3',
-    icon: join(app.getAppPath(), 'icon.png'),
+    backgroundColor: '#ffffff',
+    // 图标和 main.js 同级（asar 内 app/ 目录），不是 getAppPath 那一层
+    icon: join(__dirname, 'icon.png'),
     show: false,
     webPreferences: {
       preload: join(__dirname, 'preload.js'),

@@ -9,18 +9,7 @@
 
 import React from 'react'
 import { useStudio } from '../state/store'
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  DataTable,
-  EmptyState,
-  Modal,
-  PageBody,
-  PageHeader,
-  Spinner
-} from '../components/ui'
+import { Alert, Badge, Button, Card, DataTable, Modal, PageBody, PageHeader, Spinner } from '../components/ui'
 import { NoProject } from '../components/NoProject'
 import { DiffView } from '../components/DiffView'
 import { Icons } from '../components/icons'

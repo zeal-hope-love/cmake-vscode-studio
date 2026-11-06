@@ -27,8 +27,19 @@ const STATUS_META: Record<
   error: { label: '失败', kind: 'err' }
 }
 
-export function PreviewModal(): React.JSX.Element | null {
-  const planned = useStudio((s) => s.planned)
+/**
+ * 从错误行里抠出「这个文件为什么失败」。
+ *
+ * 错误行格式（writer.ts 生成）：`launch.json：EPERM，已重试 9 次 —— 被别的程序短暂占用`
+ * 列表里已经有文件名了，所以只把冒号后面那截当备注显示，不再重复一遍路径。
+ */
+function errorNote(errors: string[], relativePath: string): string | null {
+  const hit = errors.find((e) => e.startsWith(relativePath))
+  if (!hit) return null
+  return hit.slice(relativePath.length).replace(/^[：:]\s*/, '') || '写入失败'
+}
+
+export function PreviewModal(): React.JSX.Element | null {  const planned = useStudio((s) => s.planned)
   const open = useStudio((s) => s.previewOpen)
   const close = useStudio((s) => s.closePreview)
   const writeNow = useStudio((s) => s.writeNow)
@@ -118,8 +129,11 @@ export function PreviewModal(): React.JSX.Element | null {
     const result = lastWriteResult
     const rows = planned.map((file) => {
       const target = file.path.toLowerCase()
-      if (result?.errors.some((e) => e.startsWith(file.relativePath))) {
-        return { file, status: 'error' as const, note: '写入失败' }
+      const err = result ? errorNote(result.errors, file.relativePath) : null
+      if (err !== null) {
+        // 不再只写「写入失败」：把错误码和一句原因带上，
+        // 用户不用展开下面的详细日志就知道该干嘛（等一会儿重试 / 关掉占用它的程序）
+        return { file, status: 'error' as const, note: err }
       }
       if (result?.written.some((w) => w.toLowerCase() === target)) {
         return { file, status: 'written' as const, note: file.exists ? '已覆盖' : '已新建' }
@@ -142,6 +156,10 @@ export function PreviewModal(): React.JSX.Element | null {
                 {restoring ? '正在还原…' : '还原到写入前'}
               </Button>
             )}
+            {errorCount > 0 && (
+              // 失败之后第一反应就是「再试一次」，别让用户关掉弹窗重新点一遍
+              <Button onClick={() => void confirm()}>重试失败的文件</Button>
+            )}
             <div className="spacer" />
             <Button variant="ghost" onClick={() => void window.api.openInVSCode(projectRoot)}>
               在 VSCode 打开
@@ -153,7 +171,30 @@ export function PreviewModal(): React.JSX.Element | null {
         }
       >
         {errorCount ? (
-          <Alert kind="err">有 {errorCount} 个文件写入失败，明细见下表。其它文件已正常写入。</Alert>
+          <Alert kind="err">
+            {/* 有根因就先说根因：5 行同样的 EPERM 摆在那儿，用户只会以为
+                「重试一下就好」，其实是被安全软件/权限挡住了，重试一万次也一样。 */}
+            {result?.blockedReason ? (
+              <>
+                <div>{result.blockedReason}</div>
+                <div className="small mt-8">
+                  这 {errorCount} 个文件全都卡在同一个前置条件上，逐个重试没有意义。
+                  处理完之后再点「重试失败的文件」即可；这次失败已经记进历史。
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  有 {errorCount} 个文件写入失败，明细见下表。其它文件已正常写入。
+                </div>
+                <div className="small mt-8">
+                  常见原因是文件被杀毒软件或 VSCode 短暂占用（Windows 报 EPERM），
+                  稍等几秒点「重试失败的文件」通常就好了。这次失败也记进历史了，
+                  之后可以在「历史记录」里找到它并重试。
+                </div>
+              </>
+            )}
+          </Alert>
         ) : writtenCount === 0 ? (
           <Alert kind="info">所有文件的内容都已经是最新的，没有做任何改动。</Alert>
         ) : (

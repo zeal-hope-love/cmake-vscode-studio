@@ -10,7 +10,7 @@
 
 import { openocdCfgFileName } from './chipTargets'
 import { probeByKey } from './probes'
-import { TEMPLATE_FILE_KEYS, type GenOptions, type TemplateFileKey } from './types'
+import { TEMPLATE_FILE_KEYS, type GenOptions, type TemplateFileKey } from './types/index'
 
 export interface TemplateVars {
   /** 固件名（不含扩展名），例如 test-01 */

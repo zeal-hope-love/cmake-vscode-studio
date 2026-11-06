@@ -577,6 +577,18 @@ textarea {
   display: grid;
   gap: 14px;
 }
+
+/*
+ * 栅格子项必须允许收缩到比内容窄。
+ *
+ * 1fr 轨道的最小尺寸默认是 min-content —— select 的 min-content 又等于
+ * 最长选项的文字宽度。某个选项一长（比如串口下拉里塞了占用路径），
+ * 整条轨道会被撑到几百 px，把右边的列整个挤出窗口，页面还不出横向滚动条。
+ * min-width: 0 之后轨道老老实实按 230px 分列，长内容由控件自己截断。
+ */
+.grid > * {
+  min-width: 0;
+}
 .grid--2 {
   grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
 }
@@ -1699,7 +1711,9 @@ html[data-theme='light'] .log {
   display: flex;
   align-items: center;
   gap: 6px;
-  transition: color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
+  transition:
+    color var(--dur) var(--ease-out),
+    border-color var(--dur) var(--ease-out);
 }
 
 .segmented__item:hover {
@@ -1822,4 +1836,65 @@ html[data-theme='light'] .log {
   100% {
     transform: translateX(320%);
   }
+}
+/* ---------------------------------------------------------------------------
+   信号目录树
+   --------------------------------------------------------------------------- */
+.sym-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sym-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.sym-row:hover {
+  background: rgba(127, 127, 127, 0.08);
+}
+
+.sym-toggle {
+  width: 16px;
+  flex: 0 0 16px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--text-faint);
+  user-select: none;
+}
+
+.sym-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sym-type {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.sym-meta {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.sym-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
 }

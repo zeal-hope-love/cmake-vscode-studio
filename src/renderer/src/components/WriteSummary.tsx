@@ -17,7 +17,8 @@
 
 import React from 'react'
 import type { ConfigBundle } from '@shared/types'
-import { Card } from './ui'
+import { useStudio } from '../state/store'
+import { Button, Card } from './ui'
 
 function isDefaultTask(group: unknown): boolean {
   return (
@@ -48,6 +49,20 @@ export function WriteSummary({ bundle }: { bundle: ConfigBundle }): React.JSX.El
   const defaultTask = tasks.find((t) => isDefaultTask(t.group))
   const otherTasks = tasks.filter((t) => t !== defaultTask)
 
+  const setPage = useStudio((s) => s.setPage)
+
+  /**
+   * ST-Link / J-Link 这两条**不是默认生成的** —— 它们是 ST 官方扩展的调试类型，
+   * 需要在「调试配置 launch.json」页里勾选才会出现在上面这一栏。
+   *
+   * 不给提示的话，用户在这个页面只会看到默认那一条 OpenOCD 配置，
+   * 根本不知道还有别的可选（实际就发生过：找不到入口，以为没做）。
+   */
+  const missing = [
+    launchConfigs.some((c) => c.type === 'stlinkgdbtarget') ? null : 'ST-Link',
+    launchConfigs.some((c) => c.type === 'jlinkgdbtarget') ? null : 'J-Link'
+  ].filter(Boolean) as string[]
+
   return (
     <>
       <div className="grid grid--3">
@@ -69,6 +84,23 @@ export function WriteSummary({ bundle }: { bundle: ConfigBundle }): React.JSX.El
                 }
               />
             ))
+          )}
+
+          {missing.length > 0 && (
+            <div
+              className="faint small"
+              style={{
+                marginTop: 4,
+                paddingTop: 6,
+                borderTop: '1px dashed var(--border)',
+                lineHeight: 1.7
+              }}
+            >
+              还没有 {missing.join(' / ')} 的配置。
+              <Button size="sm" onClick={() => setPage('launch')}>
+                去调试配置页添加
+              </Button>
+            </div>
           )}
         </Card>
 

@@ -8,19 +8,7 @@
 import React from 'react'
 import { useStudio } from '../state/store'
 import type { TaskDef } from '@shared/types'
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  EmptyState,
-  Field,
-  PageBody,
-  PageHeader,
-  Select,
-  TextArea,
-  TextInput
-} from '../components/ui'
+import { Alert, Badge, Button, Card, EmptyState, Field, PageBody, PageHeader, Select, TextArea, TextInput } from '../components/ui'
 import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
 import { SplitPane } from '../components/Resizable'

@@ -6,9 +6,9 @@
  * 排查「为什么工具显示的是 X 而不是 Y」时，直接跑这个比开界面点半天快。
  */
 
-import { scanProject } from '../src/main/services/scanner'
-import { detectTools } from '../src/main/services/toolDetector'
-import { defaultGenOptions, generateBundle } from '../src/main/services/generators'
+import { scanProject } from '../src/main/services/project/scanner'
+import { detectTools } from '../src/main/services/project/toolDetector'
+import { defaultGenOptions, generateBundle } from '../src/main/services/generate/generators'
 import { DEFAULT_SETTINGS } from '@shared/types'
 
 const target = process.argv[2]

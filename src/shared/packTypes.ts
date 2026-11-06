@@ -18,6 +18,36 @@ export interface PackParam {
   type: PackParamType
   default: string | number | boolean
   options?: string[]
+  /**
+   * 枚举值 → 界面显示的中文。
+   *
+   * 不写就显示原值（`circular`）。技术词（`it` / `dma`）留着原样反而好认，
+   * 但 `circular` / `normal` 这种光看单词猜不出「循环 / 单次」的，必须给标签。
+   */
+  optionLabels?: Record<string, string>
+  /** 选项来自工程探测结果（目前支持 'uarts'：工程里的串口列表） */
+  optionsFrom?: 'uarts'
+  /**
+   * 只在另一个参数等于某值时显示。
+   *
+   * 用了它，参数面板不会出现「接收方式选了逐字节中断，底下还挂着一个 DMA 模式」
+   * 这种自相矛盾的组合 —— 不显示就不会被误以为生效了。
+   */
+  showIf?: { key: string; equals: string | number | boolean }
+  /**
+   * 依赖另一个参数：不满足时**置灰**而不是隐藏。
+   *
+   * 和 `showIf` 的区别是「用户还看不看得见」。
+   * 「DMA 模式」就属于这种：接收方式没选 dma 时它确实不生效，
+   * 但直接藏起来会让人以为这功能不存在（v1.4.1 就踩过这个坑 ——
+   * 用户翻遍参数面板都说「没什么变化」）。置灰 + 一句「先把 X 选成 Y」
+   * 才既不自相矛盾、又能被找到。
+   */
+  enableIf?: { key: string; equals: string | number | boolean }
+  /** number / text 的约束，界面用 */
+  min?: number
+  max?: number
+  step?: number
   hint?: string
 }
 
@@ -28,16 +58,25 @@ export interface PackFileSpec {
   note?: string
 }
 
+/**
+ * 生成文件用哪个渲染器。
+ *
+ * 以前这里是隐式的：代码里 `template.includes('config')` 猜，猜错就把
+ * 变量表塞进绑定的模板，生成一堆语法错误的 .c。现在改为**包里必须写明**，
+ * 猜不出来就直接拦在计划阶段，不落盘。
+ */
+export type PackRenderKind = 'config' | 'bind'
+
 export interface PackGeneratedSpec {
   template: string
   to: string
+  /** 用哪个渲染器渲染这个模板；不写会被 planPackInstall 判为清单错误 */
+  render: PackRenderKind
+  /** 改动清单里给这个文件加一句说明；不写按 render 给默认文案 */
+  note?: string
 }
 
-export type PackPatchAction =
-  | 'add-sources'
-  | 'insert-task'
-  | 'define'
-  | 'comment-out-handler'
+export type PackPatchAction = 'add-sources' | 'insert-task' | 'define' | 'comment-out-handler'
 
 export interface PackPatchSpec {
   file: string
@@ -138,6 +177,14 @@ export interface PackManifest {
   stateMachine?: PackStateMachineSpec
   /** `.ioc` 的语义化修改 */
   iocChanges?: PackIocChanges
+  /**
+   * 按**参数**改 `.ioc`（串口 / 波特率 / 中断 / RX DMA），走常规包的流程：
+   * 算进改动清单 → 一起落盘 → 可选地跑一遍 CubeMX。
+   *
+   * 和上面的 `iocChanges` 二选一：那个是写死的常量（VT13 固定 USART1 + 921600），
+   * 这个是跟着用户在界面里选的参数走。
+   */
+  iocSetup?: PackIocSetup
 
   /** 包所在目录（绝对路径），运行时补上 */
   dir?: string
@@ -157,6 +204,25 @@ export interface PackCheck {
   adapted?: string
 }
 
+/** 工程里探测到的一个串口，界面用它生成「用哪个串口」的下拉选项 */
+export interface PackUartOption {
+  name: string
+  irq: string
+  handler: string
+  txDma: string | null
+  rxDma: string | null
+  /**
+   * `.ioc` 里 RX DMA 的实际工作模式。
+   *
+   * 这一项**只能从 .ioc 读**，源码里看不出来（`hdma_usart1_rx` 这个名字
+   * 在 NORMAL / CIRCULAR 下完全一样）。没有 RX DMA 就是 null。
+   */
+  rxDmaMode: 'circular' | 'normal' | null
+  handlerDefined: boolean
+  /** 可能占用它的文件（从文件名猜的） */
+  usedBy: string[]
+}
+
 export interface PackCompatReport {
   packId: string
   root: string
@@ -167,6 +233,8 @@ export interface PackCompatReport {
   derived: Record<string, string | number | boolean>
   /** 工程里已经存在同名模块（说明装过或手工装过） */
   existingModule: boolean
+  /** 工程里探测到的串口；界面用 optionsFrom: 'uarts' 生成下拉 */
+  uarts: PackUartOption[]
 }
 
 // --------------------------------------------------------------------------
@@ -227,6 +295,8 @@ export interface PidBinding {
   guard?: string
   /** 声明这个字段的头文件（相对工程根）。界面从扫到的候选带过来，生成 #include 用 */
   include?: string
+  /** 同 ChannelBinding.externDecl */
+  externDecl?: string
 }
 
 export interface ChannelBinding {
@@ -249,11 +319,25 @@ export interface ChannelBinding {
   guard?: string
   /** 表达式里用到的符号声明在哪个头文件（例如 get_remote_control_point → remote_control.h） */
   include?: string
+  /** 变量只在 .c 里定义、头文件没写 extern 时，生成器自己补的一行声明 */
+  externDecl?: string
+}
+
+/** 单值可调参数：直接注册成 `vofa_reg_param("name", &(expr))` */
+export interface ParamBinding {
+  name: string
+  expr: string
+  guard?: string
+  include?: string
+  /** 同 ChannelBinding.externDecl */
+  externDecl?: string
 }
 
 export interface PackBindings {
   pids: PidBinding[]
   channels: ChannelBinding[]
+  /** 单值可调参数（float）。老代码不传也兼容 */
+  params?: ParamBinding[]
 }
 
 // --------------------------------------------------------------------------
@@ -276,6 +360,31 @@ export interface PackFileChange {
   skipReason?: string
 }
 
+/**
+ * 常规包里「直接改 .ioc 并让 CubeMX 重新生成」的声明。
+ *
+ * 为什么要做成声明而不是写死在代码里：不是每个包都需要动外设。
+ * vofa 需要（波特率、RX DMA 只能在 .ioc 里配），换个纯软件的包就不该有这一步。
+ */
+export interface PackIocSetup {
+  /** 参数名：哪个参数是串口（huart1） */
+  uartParam: string
+  /** 参数名：哪个参数是波特率 */
+  baudParam: string
+  /** 参数名：接收方式 it / dma */
+  rxModeParam?: string
+  /** 参数名：RX DMA 工作模式 circular / normal（只在 rxMode = dma 时有意义） */
+  dmaModeParam?: string
+  /** 参数名：是否由模块自己开中断 */
+  builtinIrqParam?: string
+  /** 参数名：中断优先级 */
+  irqPriorityParam?: string
+  /** 参数名：写完后跑不跑 CubeMX（bool 参数，和别的参数一起显示在面板上） */
+  cubeMxParam?: string
+  /** 没声明 cubeMxParam 时的默认值 */
+  runCubeMx?: boolean
+}
+
 export interface PackPlan {
   packId: string
   root: string
@@ -288,6 +397,36 @@ export interface PackPlan {
   blocked: boolean
   /** 真正会写几个文件 */
   writeCount: number
+  /**
+   * 这次的 `.ioc` 那一步。没有就是不改 .ioc。
+   *
+   * 和 `changes` 里的那一条 .ioc 记录不是重复：`changes` 是给 diff 看的，
+   * 这里是给「写完要不要跑 CubeMX」用的。
+   */
+  ioc?: PackPlanIoc
+}
+
+export interface PackPlanIoc {
+  /** 相对工程根 */
+  relPath: string
+  /** 改了哪几个键（人话） */
+  notes: string[]
+  warnings: string[]
+  /** 这次要不要跑 CubeMX */
+  runCubeMx: boolean
+  /** 本机有没有装 CubeMX —— 没装就只能改 .ioc，代码得用户自己生成 */
+  cubeMxFound: boolean
+  /** HAL 句柄名，事后核对波特率用 */
+  handle: string
+  baud: number
+}
+
+/** 写入过程中的一步（界面拿它画进度） */
+export interface PackApplyStep {
+  id: 'write' | 'cubemx' | 'baud'
+  label: string
+  status: 'running' | 'ok' | 'warn' | 'err' | 'skip'
+  detail?: string
 }
 
 export interface PackApplyResult {
@@ -296,6 +435,17 @@ export interface PackApplyResult {
   skipped: string[]
   errors: string[]
   snapshotId: string | null
+  /** CubeMX 那一步的结果；没跑就是 undefined */
+  cubeMx?: {
+    ok: boolean
+    skipped: boolean
+    detail: string
+    changedFiles: string[]
+    /** 最后几行日志，失败时给用户看 */
+    log: string[]
+  }
+  /** 代码里实际的波特率核对结果（.ioc 改了但没重新生成时会对不上） */
+  baudCheck?: { actual: number | null; match: boolean; detail: string }
 }
 
 // --------------------------------------------------------------------------

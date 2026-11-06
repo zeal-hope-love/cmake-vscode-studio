@@ -1,0 +1,64 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "启动（开发模式）",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dev"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "启动（主进程可调试）",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dev:inspect"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "启动（主进程断点即停）",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dev:brk"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "类型检查",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "typecheck"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "自检（主进程逻辑，不需要 Electron）",
+      "type": "shell",
+      "command": "node",
+      "args": ["tools/run-selftest.mjs"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "生产构建",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "build"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "打包 exe（安装包 + 绿色版）",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "dist:installer"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    }
+  ]
+}

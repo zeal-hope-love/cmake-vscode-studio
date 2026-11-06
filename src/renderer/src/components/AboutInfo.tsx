@@ -15,6 +15,7 @@ export function AboutInfo(): React.JSX.Element {
     ? [
         ['应用名称', appInfo.name],
         ['版本', appInfo.version],
+        ['编写方式', 'AI 生成 · 人工提需求与验收'],
         ['运行方式', appInfo.isPackaged ? '打包版' : '开发模式'],
         ['主题', themeLabel(settings.theme)],
         ['Electron', appInfo.electron],

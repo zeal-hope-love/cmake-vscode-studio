@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { IocEditor } from '../src/main/services/vt13/iocEditor'
+import { IocEditor } from '../src/main/services/ioc/edit'
 import { commentOutUsartHandler, isHandlerCommentedOut } from '../src/main/services/vt13/itHandler'
 import { transformRcCode } from '../src/main/services/vt13/codeTransform'
 import { usart1RxDmaFields, VT13_NVIC_USART1, VT13_BAUD } from '../src/main/services/vt13/iocSpec'

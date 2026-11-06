@@ -17,43 +17,15 @@
 import React from 'react'
 import { NoProject } from '../components/NoProject'
 import { DiffView } from '../components/DiffView'
-import {
-  Alert,
-  Button,
-  Card,
-  EmptyState,
-  Field,
-  Modal,
-  PageBody,
-  PageHeader,
-  Select,
-  Spinner,
-  TextInput
-} from '../components/ui'
+import { Alert, Button, Card, Field, Modal, PageBody, PageHeader, Select, Spinner, TextInput } from '../components/ui'
 import { Icons } from '../components/icons'
 import { PortPackPanel } from '../components/PortPackPanel'
+import { SymbolPicker } from '../components/SymbolPicker'
+import { AddrTablePanel } from '../components/AddrTablePanel'
 import { useStudio } from '../state/store'
-import type {
-  ChannelBinding,
-  PackInspectResult,
-  PackManifest,
-  PackPlan,
-  PackPlanOptions,
-  PidBinding,
-  PidCandidate
-} from '@shared/types'
-
-/** 遥控器通道预设：标准 RM 的 RC_ctrl_t 布局（rc.ch[5] + rc.s[2]） */
-const RC_PRESET_ACCESSOR = 'get_remote_control_point()'
-const RC_CHANNELS: Array<{ name: string; field: string }> = [
-  { name: 'rc_ch0', field: 'rc.ch[0]' },
-  { name: 'rc_ch1', field: 'rc.ch[1]' },
-  { name: 'rc_ch2', field: 'rc.ch[2]' },
-  { name: 'rc_ch3', field: 'rc.ch[3]' },
-  { name: 'rc_ch4', field: 'rc.ch[4]' },
-  { name: 'rc_s0', field: 'rc.s[0]' },
-  { name: 'rc_s1', field: 'rc.s[1]' }
-]
+import { mapToPackBindings, type VofaBinding, type VofaMap } from '@shared/vofaMap'
+import type { PackInspectResult, PackPlan, PackPlanOptions } from '@shared/types'
+import type { PackApplyResult, PackApplyStep, PackParam } from '@shared/packTypes'
 
 /**
  * 检查项的显示样式。
@@ -85,8 +57,7 @@ export function PacksPage(): React.JSX.Element {
   const [inspect, setInspect] = React.useState<PackInspectResult | null>(null)
   const [busy, setBusy] = React.useState(false)
   const [params, setParams] = React.useState<Record<string, string | number | boolean>>({})
-  const [pids, setPids] = React.useState<PidBinding[]>([])
-  const [channels, setChannels] = React.useState<ChannelBinding[]>([])
+  const [bindings, setBindings] = React.useState<VofaBinding[]>([])
   const [removeLegacy, setRemoveLegacy] = React.useState(false)
   const [plan, setPlan] = React.useState<PackPlan | null>(null)
   const [dirty, setDirty] = React.useState(false)
@@ -94,6 +65,10 @@ export function PacksPage(): React.JSX.Element {
   const [confirmOpen, setConfirmOpen] = React.useState(false)
   /** 写入失败的原因 —— 常驻显示 */
   const [applyErrors, setApplyErrors] = React.useState<string[]>([])
+  /** 写入过程中的每一步（写文件 → CubeMX → 核对波特率） */
+  const [steps, setSteps] = React.useState<PackApplyStep[]>([])
+  /** 上一次写入的结果 —— 主要是为了把「波特率对不上」这种话留在页面上 */
+  const [lastApply, setLastApply] = React.useState<PackApplyResult | null>(null)
 
   const pack = packs.find((p) => p.id === packId) ?? null
 
@@ -125,14 +100,24 @@ export function PacksPage(): React.JSX.Element {
     if (!projectRoot || !packId) return
     setBusy(true)
     try {
+      /*
+       * 先重读 packs 目录，再检查工程。
+       *
+       * 包清单（pack.json）里的参数表会被缓存进 store，只「重新检查」不重读的话，
+       * 改了清单（新增参数、把 showIf 换成 enableIf 这种）界面还是老的一套 ——
+       * 表现就是「改了半天，看不出任何变化」。开发时尤其容易撞上。
+       */
+      await refreshPacks()
+      const fresh = useStudio.getState().packs
       const r = await window.api.packInspect(packId, projectRoot)
       setInspect(r)
       // 把探测出来的适配值盖在包默认值之上 —— 例如「这个串口没配 RX DMA」自动选逐字节中断
-      const p = packs.find((x) => x.id === packId)
+      const p = fresh.find((x) => x.id === packId)
       const merged: Record<string, string | number | boolean> = {}
       for (const def of p?.params ?? []) merged[def.key] = def.default
       Object.assign(merged, r.report.derived)
       setParams(merged)
+      setBindings(r.savedMap?.bindings ?? [])
       setPlan(null)
       setDirty(false)
     } catch (err) {
@@ -140,16 +125,29 @@ export function PacksPage(): React.JSX.Element {
     } finally {
       setBusy(false)
     }
-  }, [projectRoot, packId, packs, notify])
+  }, [projectRoot, packId, refreshPacks, notify])
 
   React.useEffect(() => {
     void reload()
   }, [reload])
 
-  const options: PackPlanOptions | null =
+  const currentMap = (): VofaMap | null =>
     projectRoot && packId
-      ? { packId, root: projectRoot, params, bindings: { pids, channels }, removeLegacy }
+      ? { version: 1, packId: 'vofa', updatedAt: Date.now(), bindings, params }
       : null
+
+  const options: PackPlanOptions | null = (() => {
+    const map = currentMap()
+    if (!map || !projectRoot) return null
+    return {
+      packId,
+      root: projectRoot,
+      params,
+      bindings: mapToPackBindings(map),
+      map,
+      removeLegacy
+    }
+  })()
 
   const makePlan = async (): Promise<void> => {
     if (!options) return
@@ -167,11 +165,32 @@ export function PacksPage(): React.JSX.Element {
     }
   }
 
+  /*
+   * 写入进度：主进程每完成一步推一条（写文件 / 跑 CubeMX / 核对波特率）。
+   *
+   * 按 id 覆盖而不是追加 —— 同一行会在「running → ok」之间更新，
+   * 追加的话 CubeMX 那一行会刷出几十条。
+   */
+  React.useEffect(() => {
+    return window.api.onApplyProgress(({ step }) => {
+      setSteps((prev) => {
+        const i = prev.findIndex((x) => x.id === step.id)
+        if (i < 0) return [...prev, step]
+        const next = [...prev]
+        next[i] = step
+        return next
+      })
+    })
+  }, [])
+
   const write = async (): Promise<void> => {
     if (!options) return
     setBusy(true)
+    setSteps([])
+    setLastApply(null)
     try {
       const r = await window.api.packApply(options)
+      setLastApply(r)
       if (!r.ok) {
         // 失败信息常驻显示，不要只丢一个 3 秒就消失的提示 ——
         // 写入是半途而废最危险的操作（比如改了 CMakeLists 但源文件没写进去）
@@ -194,42 +213,17 @@ export function PacksPage(): React.JSX.Element {
   }
 
   // ---- 勾选 ----
-  const addPid = (c: PidCandidate): void => {
-    setPids((prev) => [
-      ...prev,
-      {
-        prefix: c.name.replace(/_pid$/i, ''),
-        pidType: c.pidType,
-        // needsInstance 时 suggestedExpr 是空字符串 —— 工具查不到这个类型的全局实例，
-        // 与其编一个不存在的变量名（编译才发现），不如留空让你填
-        expr: c.suggestedExpr,
-        guard: c.suggestedGuard,
-        include: c.file
-      }
-    ])
-    if (c.needsInstance) {
-      notify('warn', `「${c.name}」查不到全局实例，表达式要你填：实例名.${c.name}`)
-    }
+  const touch = (): void => {
     setDirty(true)
+    setPlan(null)
   }
 
-  /** 遥控器访问器声明在哪个头文件 —— 从探测结果里查，生成 #include 要用 */
-  const rcInclude = inspect?.symbolHeaders.find((h) => h.symbol === 'get_remote_control_point')?.file
-
-  const addRcPreset = (): void => {
-    setChannels((prev) => [
-      ...prev,
-      ...RC_CHANNELS.filter((rc) => !prev.some((p) => p.name === rc.name)).map((rc) => ({
-        name: rc.name,
-        mirrorFrom: `${RC_PRESET_ACCESSOR}->${rc.field}`,
-        guard: RC_PRESET_ACCESSOR,
-        include: rcInclude
-      }))
-    ])
-    if (!rcInclude) {
-      notify('warn', '工程里没找到 get_remote_control_point 的声明，生成后可能要自己补 include')
-    }
-    setDirty(true)
+  const saveMap = async (): Promise<void> => {
+    const map = currentMap()
+    if (!map || !projectRoot) return
+    const r = await window.api.vofaMapSave(projectRoot, map)
+    if (r.ok) notify('ok', '映射表已保存到 application/vofa/vofa_map.json')
+    else notify('err', r.error ?? '保存映射表失败')
   }
 
   // ------------------------------------------------------------------------
@@ -250,6 +244,100 @@ export function PacksPage(): React.JSX.Element {
     ? (inspect?.report.checks.filter((c) => c.level === 'err').length ?? 0)
     : 0
 
+  const paramOptions = (def: {
+    key: string
+    options?: string[]
+    optionLabels?: Record<string, string>
+    optionsFrom?: 'uarts'
+  }): Array<{ value: string; label: string }> => {
+    if (def.optionsFrom === 'uarts') {
+      /*
+       * 选项文字要短。
+       * select 的固有宽度 ≈ 最长选项的宽度，栅格轨道会被它撑开 ——
+       * 以前把「可能被 application/remote_control.c、…」整串塞进选项，
+       * 直接把右边「命令接收方式」那列挤出窗口，用户就以为 DMA 选项没了。
+       * 占用的完整路径列表在兼容性检查里看，这里只留文件名。
+       */
+      const base = (p: string): string => p.split(/[\\/]/).pop() ?? p
+      const opts = (inspect?.report.uarts ?? []).map((u) => ({
+        value: u.name,
+        label: `${u.name}${u.txDma ? '' : ' · 无 TX DMA'}${
+          u.rxDma ? ` · RX DMA ${u.rxDmaMode === 'circular' ? '循环' : u.rxDmaMode === 'normal' ? '单次' : '?'}` : ' · 无 RX DMA'
+        }${
+          u.usedBy.length
+            ? ` · 被 ${base(u.usedBy[0])}${u.usedBy.length > 1 ? ` 等 ${u.usedBy.length} 处` : ''}占用`
+            : ''
+        }`
+      }))
+      const cur = String(params[def.key] ?? '')
+      if (cur && !opts.some((o) => o.value === cur)) {
+        opts.unshift({ value: cur, label: `${cur}（工程里没有）` })
+      }
+      return opts
+    }
+    return (def.options ?? []).map((o) => ({ value: o, label: def.optionLabels?.[o] ?? o }))
+  }
+
+  /** 参数级联：`showIf` 不满足的那一行不渲染（比如没选 DMA 就没有「DMA 模式」） */
+  const visibleParams = (pack?.params ?? []).filter((def) => {
+    if (!def.showIf) return true
+    const cur = params[def.showIf.key]
+    return String(cur ?? '') === String(def.showIf.equals)
+  })
+
+  /**
+   * `enableIf` 不满足 → 置灰 + 说明，**不删行**。
+   *
+   * 为什么不和 showIf 统一成隐藏：DMA 模式这种「隐性开关」藏起来之后，
+   * 用户以为功能根本不存在。留一行灰的，等于告诉人「这里能改，只是还没轮到它」。
+   */
+  const paramGate = (def: PackParam): { disabled: boolean; note?: string } => {
+    const dep = def.enableIf
+    if (!dep || String(params[dep.key] ?? '') === String(dep.equals)) return { disabled: false }
+    const depDef = (pack?.params ?? []).find((p) => p.key === dep.key)
+    const want = depDef?.optionLabels?.[String(dep.equals)] ?? String(dep.equals)
+    return {
+      disabled: true,
+      note: `上面把「${depDef?.label ?? dep.key}」选成 ${want} 之后，这一项才生效`
+    }
+  }
+
+  /*
+   * 选中串口在 .ioc 里的 RX DMA 现状 —— 直接摆在参数区顶上。
+   *
+   * 光靠下拉框后面的「· 无 RX DMA」不够：那串字在下拉框里，得点开才看得到；
+   * 用户真正的问题是「我这块板子现在到底开没开 DMA、开的是哪种」，
+   * 所以要有一行独立的、随手能读到的结论。
+   */
+  const uartKey = pack?.iocSetup?.uartParam ?? 'uart'
+  const selUart =
+    (inspect?.report.uarts ?? []).find((u) => u.name === String(params[uartKey] ?? '')) ?? null
+  const rxModeKey = pack?.iocSetup?.rxModeParam
+  const wantDma = rxModeKey ? String(params[rxModeKey] ?? '') === 'dma' : false
+  const dmaModeKey = pack?.iocSetup?.dmaModeParam
+  const targetDma = String((dmaModeKey && params[dmaModeKey]) || 'circular')
+  const dmaLabel = (m: 'circular' | 'normal' | null): string =>
+    m === 'circular' ? '循环（DMA_CIRCULAR）' : m === 'normal' ? '单次（DMA_NORMAL）' : '模式未知'
+
+  /** 一句人能直接读懂的结论：现在是什么、写入时会动什么 */
+  const dmaStatusText = ((): string | null => {
+    if (!selUart) return null
+    const cur: 'circular' | 'normal' | null = selUart.rxDma ? selUart.rxDmaMode : null
+    const target: 'circular' | 'normal' = targetDma === 'normal' ? 'normal' : 'circular'
+    if (!selUart.rxDma) {
+      return wantDma
+        ? `${selUart.name} 的 .ioc 里没有 RX DMA —— 写入会补上并设成 ${dmaLabel(target)}，再跑一遍 CubeMX`
+        : `${selUart.name} 的 .ioc 里没有 RX DMA。把「命令接收方式」选成 dma，工具就会补上并配好模式`
+    }
+    if (!wantDma) {
+      return `${selUart.name} 的 .ioc 里已配 RX DMA，当前是 ${dmaLabel(cur)}；接收方式选 it 时用不到它`
+    }
+    if (cur === target) {
+      return `${selUart.name} 的 .ioc 里已配 RX DMA，当前是 ${dmaLabel(cur)}，和这里选的一致 —— 写入时这一项不动`
+    }
+    return `${selUart.name} 的 .ioc 里当前是 ${dmaLabel(cur)}，写入会改成 ${dmaLabel(target)}（只改 Dma.<串口>_RX.<槽>.Mode 这一个键）`
+  })()
+
   // 移植包：整页交给 PortPackPanel（它内部也要工程，所以还是得挡一下）
   if (pack && isPortPack && portMode) {
     if (!hasProject) {
@@ -262,9 +350,7 @@ export function PacksPage(): React.JSX.Element {
         </>
       )
     }
-    return (
-      <PortPackPanel pack={pack} projectRoot={projectRoot!} onBack={() => setPortMode(false)} />
-    )
+    return <PortPackPanel pack={pack} projectRoot={projectRoot!} onBack={() => setPortMode(false)} />
   }
 
   return (
@@ -286,8 +372,7 @@ export function PacksPage(): React.JSX.Element {
             {hasProject && project && (
               <>
                 <Button size="sm" onClick={() => void window.api.openInVSCode(project.root)}>
-                  <Icons.vscode />
-                  在 VSCode 打开
+                  <Icons.vscode />在 VSCode 打开
                 </Button>
                 <Button size="sm" onClick={() => void window.api.openInExplorer(project.root)}>
                   <Icons.folder />
@@ -353,8 +438,8 @@ export function PacksPage(): React.JSX.Element {
                     进入移植流程
                   </Button>
                   <span className="small faint">
-                    这个模块要改 .ioc、调 CubeMX 重新生成，走的是另一套流程
-                    （预检 → 执行 → 验收），不是下面那种「生成清单再写入」
+                    这个模块要改 .ioc、调 CubeMX 重新生成，走的是另一套流程 （预检 → 执行 →
+                    验收），不是下面那种「生成清单再写入」
                   </span>
                 </div>
               )}
@@ -413,7 +498,7 @@ export function PacksPage(): React.JSX.Element {
                       checked={removeLegacy}
                       onChange={(e) => {
                         setRemoveLegacy(e.target.checked)
-                        setDirty(true)
+                        touch()
                       }}
                     />
                     <span>顺手删掉旧版平铺布局的文件（不勾的话会重复定义符号，装不了）</span>
@@ -430,363 +515,295 @@ export function PacksPage(): React.JSX.Element {
             这里再摆一份「写入工程」只会让人以为有两套做法。 */}
         {!isPortPack && (
           <>
-
-        {/* ---- ③ 参数 ---- */}
-        {pack && (
-          <Card title="参数" hint="大部分是探测出来的，一般不用手改">
-            <div className="grid grid--3">
-              {pack.params.map((def) => (
-                <Field key={def.key} label={def.label} hint={def.hint}>
-                  {def.type === 'bool' ? (
-                    <label className="checkbox">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(params[def.key])}
-                        onChange={(e) => {
-                          setParams((p) => ({ ...p, [def.key]: e.target.checked }))
-                          setDirty(true)
-                        }}
-                      />
-                      <span className="small">{Boolean(params[def.key]) ? '开' : '关'}</span>
-                    </label>
-                  ) : def.type === 'enum' ? (
-                    <Select
-                      value={String(params[def.key] ?? '')}
-                      onChange={(e) => {
-                        setParams((p) => ({ ...p, [def.key]: e.target.value }))
-                        setDirty(true)
-                      }}
-                      options={(def.options ?? []).map((o) => ({ value: o, label: o }))}
-                    />
-                  ) : def.type === 'number' ? (
-                    <TextInput
-                      type="number"
-                      value={String(params[def.key] ?? '')}
-                      onChange={(e) => {
-                        setParams((p) => ({ ...p, [def.key]: Number(e.target.value) }))
-                        setDirty(true)
-                      }}
-                    />
-                  ) : (
-                    <TextInput
-                      mono
-                      value={String(params[def.key] ?? '')}
-                      onChange={(e) => {
-                        setParams((p) => ({ ...p, [def.key]: e.target.value }))
-                        setDirty(true)
-                      }}
-                    />
-                  )}
-                </Field>
-              ))}
-            </div>
-          </Card>
-        )}
-
-        {/* ---- ④ 调参目标 ---- */}
-        {/* 只有声明了 onlineTuning 的包才显示 —— 这是 VOFA+ 特有的能力，
-            遥控模块 VT13 用不上，无条件显示等于误导。 */}
-        {inspect && features.includes('onlineTuning') && (
-          <Card title="调参目标（在线改）" hint="勾一个 = 一键注册一整组 Kp/Ki/Kd/max_out/max_iout">
-            <div className="faint small mb-12">
-              下面是**从工程里扫出来的** PID 结构体。点「用这个」自动填好表达式，表达式可以改 （比如把
-              yaw 改成 pitch）。
-            </div>
-
-            {inspect.pidCandidates.length === 0 ? (
-              <EmptyState title="没扫到 PID 结构体">
-                这一页只认 pid_type_def / gimbal_PID_t 两种类型。也可以用下面的「自定义通道」自己填。
-              </EmptyState>
-            ) : (
-              <div className="list list__scroll" style={{ maxHeight: 240 }}>
-                {inspect.pidCandidates.map((c) => (
-                  <div key={c.id} className="list__row">
-                    <div className="grow">
-                      <div className="mono small">{c.name}</div>
-                      <div className="faint small">
-                        {c.pidType} · {c.isMember ? `成员 of ${c.ownerType}` : '全局'}
-                        {c.isArray ? ' · 数组' : ''} · {c.file}:{c.line}
-                      </div>
-                    </div>
-                    <Button size="sm" onClick={() => addPid(c)}>
-                      用这个
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {pids.length > 0 && (
-              <>
-                <div className="bold mb-8" style={{ marginTop: 12 }}>
-                  已选 {pids.length} 组
-                </div>
-                {pids.map((p, i) => (
-                  <div className="row" key={i}>
-                    <div style={{ width: 170 }}>
-                      <Field label="参数前缀">
-                        <TextInput
-                          mono
-                          value={p.prefix}
-                          onChange={(e) => {
-                            const v = e.target.value
-                            setPids((prev) => prev.map((x, k) => (k === i ? { ...x, prefix: v } : x)))
-                            setDirty(true)
-                          }}
-                        />
-                      </Field>
-                    </div>
-                    <div className="grow">
-                      <Field label="变量表达式">
-                        <TextInput
-                          mono
-                          value={p.expr}
-                          onChange={(e) => {
-                            const v = e.target.value
-                            setPids((prev) => prev.map((x, k) => (k === i ? { ...x, expr: v } : x)))
-                            setDirty(true)
-                          }}
-                        />
-                      </Field>
-                    </div>
-                    <div style={{ width: 230 }}>
-                      <Field label="判空表达式（可空）">
-                        <TextInput
-                          mono
-                          value={p.guard ?? ''}
-                          onChange={(e) => {
-                            const v = e.target.value
-                            setPids((prev) => prev.map((x, k) => (k === i ? { ...x, guard: v } : x)))
-                            setDirty(true)
-                          }}
-                        />
-                      </Field>
-                    </div>
-                    <div style={{ paddingTop: 18 }}>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setPids((prev) => prev.filter((_, k) => k !== i))
-                          setDirty(true)
-                        }}
-                      >
-                        移除
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-                <div className="faint small">
-                  会生成{' '}
-                  <span className="mono">{pids[0]?.prefix}_kp / _ki / _kd / _maxout / _maxiout</span>
-                  {pids.length > 1 ? ' 这样的若干组' : ''}，用 VOFA 发{' '}
-                  <span className="mono">set {pids[0]?.prefix}_kp 3.5</span> 就能改。
-                </div>
-              </>
-            )}
-          </Card>
-        )}
-
-        {/* ---- ⑤ 监看通道 ---- */}
-        {inspect && features.includes('waveform') && (
-          <Card title="监看通道（画波形）" hint="顺序 = VOFA 里的 ch0、ch1…">
-            <div className="row mb-12">
-              <Button size="sm" onClick={addRcPreset}>
-                加入遥控器通道（ch0-4 / s0-1）
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => {
-                  setChannels((prev) => [...prev, { name: `ch${prev.length}`, expr: '' }])
-                  setDirty(true)
-                }}
-              >
-                + 自定义通道
-              </Button>
-            </div>
-
-            {channels.length === 0 ? (
-              <div className="faint small">还没加通道。加了才有波形可看。</div>
-            ) : (
-              channels.map((c, i) => (
-                <div className="row" key={i}>
-                  <div style={{ width: 150 }}>
-                    <Field label="通道名">
-                      <TextInput
-                        mono
-                        value={c.name}
-                        onChange={(e) => {
-                          const v = e.target.value
-                          setChannels((prev) => prev.map((x, k) => (k === i ? { ...x, name: v } : x)))
-                          setDirty(true)
-                        }}
-                      />
-                    </Field>
-                  </div>
-                  <div className="grow">
-                    <Field
-                      label={c.mirrorFrom ? '源表达式（会做 fp32 镜像）' : '变量表达式'}
-                      hint={c.mirrorFrom ? '源类型不是 fp32，工具自动加一个镜像变量' : undefined}
-                    >
-                      <TextInput
-                        mono
-                        value={c.mirrorFrom ?? c.expr ?? ''}
-                        onChange={(e) => {
-                          const v = e.target.value
-                          setChannels((prev) =>
-                            prev.map((x, k) =>
-                              k === i ? (x.mirrorFrom ? { ...x, mirrorFrom: v } : { ...x, expr: v }) : x
-                            )
-                          )
-                          setDirty(true)
-                        }}
-                      />
-                    </Field>
-                  </div>
-                  <div style={{ width: 210 }}>
-                    <Field label="判空表达式（可空）">
-                      <TextInput
-                        mono
-                        value={c.guard ?? ''}
-                        onChange={(e) => {
-                          const v = e.target.value
-                          setChannels((prev) => prev.map((x, k) => (k === i ? { ...x, guard: v } : x)))
-                          setDirty(true)
-                        }}
-                      />
-                    </Field>
-                  </div>
-                  <div style={{ paddingTop: 18 }}>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setChannels((prev) => prev.filter((_, k) => k !== i))
-                        setDirty(true)
-                      }}
-                    >
-                      移除
-                    </Button>
-                  </div>
-                </div>
-              ))
-            )}
-          </Card>
-        )}
-
-        {/* ---- ⑥ 改动清单 ---- */}
-        <Card
-          title="改动清单"
-          hint="只算不写，看清楚了再落盘"
-          actions={
-            <div className="flex">
-              <Button onClick={() => void makePlan()} disabled={busy}>
-                {plan ? '重新生成' : '生成清单'}
-              </Button>
-              <Button
-                variant="primary"
-                disabled={!plan || plan.blocked || plan.writeCount === 0}
-                onClick={() => setConfirmOpen(true)}
-              >
-                写入工程{plan ? `（${plan.writeCount}）` : ''}
-              </Button>
-            </div>
-          }
-        >
-          {dirty && <Alert kind="warn">参数或勾选改过了，点「重新生成」刷新清单。</Alert>}
-
-          {applyErrors.length > 0 && (
-            <Alert kind="err">
-              <div className="bold mb-8">上次写入失败（已自动存快照，可以还原）</div>
-              {applyErrors.map((e, i) => (
-                <div key={i} className="small mono">
-                  · {e}
-                </div>
-              ))}
-            </Alert>
-          )}
-
-          {!plan ? (
-            <div className="faint small">
-              点右上角「生成清单」，会算出要新建哪些文件、要改哪几行，逐个给你看。
-            </div>
-          ) : (
-            <>
-              {plan.blocked && (
-                <Alert kind="err">有必须先处理的问题，写入被挡住。看下面标红的那条。</Alert>
-              )}
-
-              <div className="list">
-                {plan.changes.map((c, i) => (
+            {/* ---- ③ 参数 ---- */}
+            {pack && (
+              <Card title="参数" hint="大部分是探测出来的，一般不用手改">
+                {dmaStatusText && (
                   <div
-                    key={c.path}
-                    className="list__row"
-                    style={{ cursor: c.after !== null || c.before !== null ? 'pointer' : 'default' }}
-                    onClick={() => setOpenIdx(i)}
+                    className="small"
+                    style={{
+                      marginBottom: 12,
+                      padding: '8px 10px',
+                      border: '1px solid var(--border)',
+                      borderRadius: 6
+                    }}
                   >
-                    <span
-                      className="mono small"
-                      style={{
-                        width: 74,
-                        flex: '0 0 auto',
-                        color:
-                          c.action === 'skip'
-                            ? 'var(--text-faint)'
-                            : c.action === 'patch'
-                              ? 'var(--accent)'
-                              : 'var(--ok, #16a34a)'
-                      }}
-                    >
-                      {c.action === 'create'
-                        ? '＋新增'
-                        : c.action === 'overwrite'
-                          ? '覆盖'
-                          : c.action === 'patch'
-                            ? '改几行'
-                            : c.action === 'delete'
-                              ? '删除'
-                              : '跳过'}
-                    </span>
-                    <div className="grow">
-                      <div className="mono small">{c.path}</div>
-                      <div className="faint small">{c.note}</div>
-                      {c.skipReason && (
-                        <div className="small" style={{ color: 'var(--err)' }}>
-                          {c.skipReason}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {plan.changes[openIdx] &&
-                plan.changes[openIdx].before !== null &&
-                plan.changes[openIdx].after !== null && (
-                  <div style={{ marginTop: 10 }}>
-                    <div className="small bold mb-8">
-                      差异：<span className="mono">{plan.changes[openIdx].path}</span>
-                    </div>
-                    <DiffView
-                      previous={plan.changes[openIdx].before}
-                      current={plan.changes[openIdx].after}
-                    />
+                    <span className="faint">RX DMA · </span>
+                    {dmaStatusText}
                   </div>
                 )}
+                <div className="grid grid--3">
+                  {visibleParams.map((def) => {
+                    const gate = paramGate(def)
+                    return (
+                      <Field
+                        key={def.key}
+                        label={def.label}
+                        hint={
+                          gate.note ? (
+                            <>
+                              {def.hint}
+                              <div style={{ color: 'var(--warn, #c98a00)', marginTop: 4 }}>{gate.note}</div>
+                            </>
+                          ) : (
+                            def.hint
+                          )
+                        }
+                        style={gate.disabled ? { opacity: 0.55 } : undefined}
+                      >
+                        {def.type === 'bool' ? (
+                          <label className="checkbox">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(params[def.key])}
+                              disabled={gate.disabled}
+                              onChange={(e) => {
+                                setParams((p) => ({ ...p, [def.key]: e.target.checked }))
+                                touch()
+                              }}
+                            />
+                            <span className="small">{Boolean(params[def.key]) ? '开' : '关'}</span>
+                          </label>
+                        ) : def.type === 'enum' ? (
+                          <Select
+                            value={String(params[def.key] ?? '')}
+                            disabled={gate.disabled}
+                            onChange={(e) => {
+                              setParams((p) => ({ ...p, [def.key]: e.target.value }))
+                              touch()
+                            }}
+                            options={paramOptions(def)}
+                          />
+                        ) : def.type === 'number' ? (
+                          <TextInput
+                            type="number"
+                            min={def.min}
+                            max={def.max}
+                            step={def.step}
+                            disabled={gate.disabled}
+                            value={String(params[def.key] ?? '')}
+                            onChange={(e) => {
+                              setParams((p) => ({ ...p, [def.key]: Number(e.target.value) }))
+                              touch()
+                            }}
+                          />
+                        ) : (
+                          <TextInput
+                            mono
+                            disabled={gate.disabled}
+                            value={String(params[def.key] ?? '')}
+                            onChange={(e) => {
+                              setParams((p) => ({ ...p, [def.key]: e.target.value }))
+                              touch()
+                            }}
+                          />
+                        )}
+                      </Field>
+                    )
+                  })}
+                </div>
+              </Card>
+            )}
 
-              {plan.manualSteps.length > 0 && (
-                <Alert kind="info">
-                  <div className="bold mb-8">装完之后你要自己做的（工具替你不了）</div>
-                  {plan.manualSteps.map((s, i) => (
-                    <div key={i} className="small">
-                      · {s}
+            {/* ---- ④ 信号目录 + 映射表 ---- */}
+            {inspect && (features.includes('onlineTuning') || features.includes('waveform')) && (
+              <SymbolPicker
+                symbols={inspect.symbols}
+                bindings={bindings}
+                features={features}
+                onChange={(next) => {
+                  setBindings(next)
+                  touch()
+                }}
+                onNotify={notify}
+                onSaveMap={() => void saveMap()}
+              />
+            )}
+
+            {/*
+              地址表：另一条调参路 —— 从 .elf 拿地址直接读内存，不改源码、不用重编。
+              和上面的信号目录并列放着，因为它们的取舍不一样（static / 结构体成员），
+              用户得能一眼看到两条路各自能干什么。
+            */}
+            {inspect && projectRoot && features.includes('waveform') && (
+              <AddrTablePanel projectRoot={projectRoot} onNotify={notify} />
+            )}
+
+            {/* ---- ⑥ 改动清单 ---- */}
+            <Card
+              title="改动清单"
+              hint="只算不写，看清楚了再落盘"
+              actions={
+                <div className="flex">
+                  <Button onClick={() => void makePlan()} disabled={busy}>
+                    {plan ? '重新生成' : '生成清单'}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    disabled={!plan || plan.blocked || plan.writeCount === 0}
+                    onClick={() => setConfirmOpen(true)}
+                  >
+                    写入工程{plan ? `（${plan.writeCount}）` : ''}
+                  </Button>
+                </div>
+              }
+            >
+              {dirty && (
+                <Alert kind="warn">
+                  参数或勾选改过了，点「生成清单」看新的差异 —— 写入始终以最新清单为准。
+                </Alert>
+              )}
+
+              {applyErrors.length > 0 && (
+                <Alert kind="err">
+                  <div className="bold mb-8">上次写入失败（已自动存快照，可以还原）</div>
+                  {applyErrors.map((e, i) => (
+                    <div key={i} className="small mono">
+                      · {e}
                     </div>
                   ))}
                 </Alert>
               )}
-            </>
-          )}
-        </Card>
+
+              {!plan ? (
+                <div className="faint small">
+                  点右上角「生成清单」，会算出要新建哪些文件、要改哪几行，逐个给你看。
+                </div>
+              ) : (
+                <>
+                  {plan.blocked && (
+                    <Alert kind="err">有必须先处理的问题，写入被挡住。看下面标红的那条。</Alert>
+                  )}
+
+                  {/*
+                    .ioc 那一步单独说清楚：它会改外设配置、还可能拉起 CubeMX
+                    重写 Src/Inc。用户点「写入」之前必须知道这两件事。
+                  */}
+                  {plan.ioc && plan.ioc.runCubeMx && (
+                    <Alert kind="info">
+                      写完会顺带跑一次 <b>STM32CubeMX</b> 重新生成代码（约 20~60 秒），
+                      否则改了 .ioc 也不会生效 —— 波特率写在 .ioc 里，而真正的
+                      <code className="mono">huart.Init.BaudRate</code> 在{' '}
+                      <code className="mono">Src/usart.c</code> 里。
+                      <div className="faint small mt-8">
+                        跑之前会把 <code className="mono">Src/</code> 和{' '}
+                        <code className="mono">Inc/</code> 一起存进快照，生成坏了能整体还原。
+                      </div>
+                    </Alert>
+                  )}
+                  {plan.ioc && plan.ioc.warnings.length > 0 && (
+                    <Alert kind="warn">
+                      <div className="bold mb-8">.ioc 那一步要留意</div>
+                      {plan.ioc.warnings.map((w, i) => (
+                        <div key={i} className="small">
+                          · {w}
+                        </div>
+                      ))}
+                    </Alert>
+                  )}
+
+                  {/*
+                    上一次写入的结果留在这里。波特率对不上是**静默失败**：
+                    波形照发、串口照开，只是全是乱码 —— 不留个常驻提示，
+                    用户会去怀疑硬件。
+                  */}
+                  {lastApply?.cubeMx && !lastApply.cubeMx.skipped && !lastApply.cubeMx.ok && (
+                    <Alert kind="err">
+                      <div className="bold mb-8">CubeMX 没能重新生成代码</div>
+                      <div className="small">{lastApply.cubeMx.detail}</div>
+                      {lastApply.cubeMx.log.length > 0 && (
+                        <div className="small mono mt-8">
+                          {lastApply.cubeMx.log.slice(-4).map((l, i) => (
+                            <div key={i}>· {l}</div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="faint small mt-8">
+                        .ioc 已经改好了。用 CubeMX 打开它点一次「Generate Code」也行，
+                        或者处理后重新点「写入工程」。
+                      </div>
+                    </Alert>
+                  )}
+                  {lastApply?.baudCheck && !lastApply.baudCheck.match && (
+                    <Alert kind="warn">
+                      <div className="bold mb-8">波特率还没真正生效</div>
+                      <div className="small">{lastApply.baudCheck.detail}</div>
+                    </Alert>
+                  )}
+
+                  <div className="list">
+                    {plan.changes.map((c, i) => (
+                      <div
+                        key={c.path}
+                        className="list__row"
+                        style={{
+                          cursor: c.after !== null || c.before !== null ? 'pointer' : 'default'
+                        }}
+                        onClick={() => setOpenIdx(i)}
+                      >
+                        <span
+                          className="mono small"
+                          style={{
+                            width: 74,
+                            flex: '0 0 auto',
+                            color:
+                              c.action === 'skip'
+                                ? 'var(--text-faint)'
+                                : c.action === 'patch'
+                                  ? 'var(--accent)'
+                                  : 'var(--ok, #16a34a)'
+                          }}
+                        >
+                          {c.action === 'create'
+                            ? '＋新增'
+                            : c.action === 'overwrite'
+                              ? '覆盖'
+                              : c.action === 'patch'
+                                ? '改几行'
+                                : c.action === 'delete'
+                                  ? '删除'
+                                  : '跳过'}
+                        </span>
+                        <div className="grow">
+                          <div className="mono small">{c.path}</div>
+                          <div className="faint small">{c.note}</div>
+                          {c.skipReason && (
+                            <div className="small" style={{ color: 'var(--err)' }}>
+                              {c.skipReason}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {plan.changes[openIdx] &&
+                    plan.changes[openIdx].before !== null &&
+                    plan.changes[openIdx].after !== null && (
+                      <div style={{ marginTop: 10 }}>
+                        <div className="small bold mb-8">
+                          差异：<span className="mono">{plan.changes[openIdx].path}</span>
+                        </div>
+                        <DiffView
+                          previous={plan.changes[openIdx].before}
+                          current={plan.changes[openIdx].after}
+                        />
+                      </div>
+                    )}
+
+                  {plan.manualSteps.length > 0 && (
+                    <Alert kind="info">
+                      <div className="bold mb-8">装完之后你要自己做的（工具替你不了）</div>
+                      {plan.manualSteps.map((s, i) => (
+                        <div key={i} className="small">
+                          · {s}
+                        </div>
+                      ))}
+                    </Alert>
+                  )}
+                </>
+              )}
+            </Card>
           </>
         )}
       </PageBody>
@@ -820,6 +837,48 @@ export function PacksPage(): React.JSX.Element {
                 </div>
               ))}
           </div>
+
+          {/*
+            进度只在真的跑起来之后出现。CubeMX 那一步要几十秒，
+            没有这几行的话界面就只有一个转圈，用户不知道卡在哪。
+          */}
+          {steps.length > 0 && (
+            <div className="mt-12">
+              {steps.map((st) => (
+                <div key={st.id} className="row small" style={{ alignItems: 'baseline', gap: 8 }}>
+                  <span
+                    className="mono"
+                    style={{
+                      width: 18,
+                      flex: '0 0 auto',
+                      color:
+                        st.status === 'ok'
+                          ? 'var(--ok, #16a34a)'
+                          : st.status === 'err'
+                            ? 'var(--err)'
+                            : st.status === 'warn'
+                              ? 'var(--warn, #d97706)'
+                              : 'var(--text-faint)'
+                    }}
+                  >
+                    {st.status === 'ok'
+                      ? '✓'
+                      : st.status === 'err'
+                        ? '✗'
+                        : st.status === 'warn'
+                          ? '!'
+                          : st.status === 'skip'
+                            ? '–'
+                            : '·'}
+                  </span>
+                  <span style={{ flex: 1 }}>
+                    {st.label}
+                    {st.detail && <span className="faint"> · {st.detail}</span>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </Modal>
       )}
     </>

@@ -11,44 +11,51 @@
  *   7. 用生成的 OpenOCD 接线配置真的启动一次 openocd
  */
 
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { buildTemplateFile, parseTemplateFile, TEMPLATE_FORMAT_DOC, isBuiltinPresetId } from '../src/shared/templateFormat'
-import { listBuiltinPackPresets } from '../src/main/services/packPresetStore'
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  buildTemplateFile,
+  parseTemplateFile,
+  TEMPLATE_FORMAT_DOC,
+  isBuiltinPresetId
+} from '../src/shared/templateFormat'
+import { listBuiltinPackPresets } from '../src/main/services/data/packPresetStore'
 import { compareVersion } from '../src/shared/versionCompare'
 import {
   captureSnapshotDetailed,
   configureSnapshots,
   listSnapshots,
   restoreSnapshot
-} from '../src/main/services/snapshotStore'
+} from '../src/main/services/data/snapshotStore'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DEFAULT_SETTINGS, type AppSettings } from '@shared/types'
-import { defaultGenOptions, generateBundle, generateLaunch } from '../src/main/services/generators'
-import { scanProject } from '../src/main/services/scanner'
+import { defaultGenOptions, generateBundle, generateLaunch } from '../src/main/services/generate/generators'
+import { scanProject } from '../src/main/services/project/scanner'
 import {
   buildCmakeModel,
   buildProjectBuildModel,
   collectReferencedPaths
-} from '../src/main/services/cmakeModel'
-import { planSourceEdit } from '../src/main/services/cmakeEdit'
-import { findOrphanNotes, scanSources, renderNewFile } from '../src/main/services/sourceScanner'
+} from '../src/main/services/cmake/cmakeModel'
+import { planSourceEdit } from '../src/main/services/cmake/cmakeEdit'
+import { findOrphanNotes, scanSources, renderNewFile } from '../src/main/services/project/sourceScanner'
 import {
   applyProjectRename,
   planProjectRename,
   sameName as sameProjectName
-} from '../src/main/services/projectRename'
-import { inspectVscodeOwnership } from '../src/main/services/vscodeOwnership'
-import { detectTools, findSvdFile } from '../src/main/services/toolDetector'
-import { planFiles, writeFiles } from '../src/main/services/writer'
+} from '../src/main/services/project/projectRename'
+import { inspectVscodeOwnership } from '../src/main/services/generate/vscodeOwnership'
+import { detectTools, findSvdFile } from '../src/main/services/project/toolDetector'
+import { planFiles, writeFiles } from '../src/main/services/generate/writer'
+import { buildWriteRecord } from '../src/main/services/data/historyStore'
+import { openSnapshot } from '../src/main/services/data/commit'
 import {
   captureSnapshot,
   configureSnapshots,
   listSnapshots,
   restoreSnapshot
-} from '../src/main/services/snapshotStore'
-import { discoverProjects, getRecentProjects, parseFileUri } from '../src/main/services/workspaceFinder'
+} from '../src/main/services/data/snapshotStore'
+import { discoverProjects, getRecentProjects, parseFileUri } from '../src/main/services/project/workspaceFinder'
 import { BUILTIN_TEMPLATES, isBuiltinTemplateId } from '../src/shared/builtinTemplates'
 import {
   findUnresolvedVariables,
@@ -56,7 +63,7 @@ import {
   renderTemplateText
 } from '../src/shared/templateRender'
 import { buildTemplateSkeleton } from '../src/shared/templateSkeleton'
-import { TEMPLATE_FILE_KEYS } from '../src/shared/types'
+import { TEMPLATE_FILE_KEYS } from '../src/shared/types/index'
 import { adaptTemplateOptions } from '../src/shared/templateAdapt'
 import {
   checkPackCompat,
@@ -65,13 +72,31 @@ import {
   loadPack,
   readPackFile,
   scanPidStructs
-} from '../src/main/services/packStore'
+} from '../src/main/services/pack/packStore'
 import {
-  applyPackInstall,
+  applyPackCore,
   planPackInstall,
   renderBind,
-  renderConfig
-} from '../src/main/services/packInstaller'
+  renderConfig,
+  renderGenerated
+} from '../src/main/services/pack/index'
+import { scanSymbols } from '../src/main/services/project/symbolScanner'
+import { checkBaudInCode, peripheralOf, planUartIoc, readRxDmaMode } from '../src/main/services/ioc/uart'
+import { parseElfVars } from '../src/main/services/project/elfSymbols'
+import {
+  ADDR_SLOT_MAX,
+  MEM_KINDS,
+  buildReadCommand,
+  buildSlotCommands,
+  buildWriteCommand,
+  hexAddr,
+  kindFromSize,
+  normalizeAddrTable,
+  serializeAddrTable,
+  slotLegend
+} from '../src/shared/addrTable'
+import { loadVofaMap, saveVofaMap, vofaMapPath } from '../src/main/services/data/vofaMapStore'
+import { bindingFromSymbol, mapToPackBindings } from '../src/shared/vofaMap'
 
 let failures = 0
 let checks = 0
@@ -413,6 +438,110 @@ check(
 )
 check('调试配置的 device 为 STM32F103C8T6', bundle.launch.configurations[0].device === 'STM32F103C8T6')
 
+// ---- 多调试器：一个工程同时放 OpenOCD + ST 官方 ST-Link ----
+/**
+ * 为什么要有这一节：工程里一写 launch.json，VSCode 就不再显示
+ * STM32 VS Code Extension 自带的「ST-Link GDB server / J-Link GDB server」，
+ * 用户插上 ST-Link 会发现下拉里没有可选项。所以要能把它们补进去。
+ */
+const multiLaunch = generateLaunch(project, {
+  ...options,
+  debugTargets: ['probe', 'stlink-gdbserver', 'jlink-gdbserver']
+})
+
+check(
+  '多调试器：三条配置都生成了',
+  multiLaunch.configurations.length === 3,
+  multiLaunch.configurations.map((c) => `${c.name}[${c.type}]`).join(' | ')
+)
+check(
+  '多调试器：第一条仍是 cortex-debug（老行为不变）',
+  multiLaunch.configurations[0].type === 'cortex-debug' &&
+    multiLaunch.configurations[0].name === 'CMSIS-DAP / DAP-Link：烧录并调试',
+  `${multiLaunch.configurations[0].name}[${multiLaunch.configurations[0].type}]`
+)
+
+/**
+ * 名字里必须带探针名。
+ *
+ * 起因：用户明确要求「不要说 Debug 停在 main，直接说 DAP-Link」。
+ * 更要紧的是原理 —— 同时生成了 ST-Link 那条之后，两条都叫「烧录并调试」，
+ * 下拉里根本分不出哪条走哪根线，选错就是连不上。
+ */
+check(
+  '探针那条配置名带「DAP-Link」',
+  multiLaunch.configurations[0].name.includes('DAP-Link'),
+  multiLaunch.configurations[0].name
+)
+check(
+  '两条配置名互不相同（下拉里能分清）',
+  new Set(multiLaunch.configurations.map((c) => c.name)).size ===
+    multiLaunch.configurations.length,
+  multiLaunch.configurations.map((c) => c.name).join(' | ')
+)
+check(
+  'ST-Link 那条名字带 ST-Link',
+  multiLaunch.configurations[1].name.includes('ST-Link'),
+  multiLaunch.configurations[1].name
+)
+
+const stCfg = multiLaunch.configurations.find((c) => c.type === 'stlinkgdbtarget')
+check('ST-Link：生成 stlinkgdbtarget 类型', Boolean(stCfg), JSON.stringify(stCfg))
+/**
+ * deviceName / deviceCore 是 ST 适配器**强校验**的字段：
+ * 缺了会直接抛 `Core not found: … verify "deviceCore" attribute`，GDB 起不来。
+ */
+check('ST-Link：带 deviceName', stCfg?.deviceName === 'STM32F103C8T6', String(stCfg?.deviceName))
+check('ST-Link：deviceCore 推导为 Cortex-M3（F1 系列）', stCfg?.deviceCore === 'Cortex-M3', String(stCfg?.deviceCore))
+check(
+  'ST-Link：preBuild 置空（别去跑 ST 扩展自带构建）',
+  stCfg?.preBuild === '',
+  `preBuild=${JSON.stringify(stCfg?.preBuild)}`
+)
+check(
+  'ST-Link：preLaunchTask 挂上「构建 Debug」',
+  stCfg?.preLaunchTask === '构建 Debug',
+  String(stCfg?.preLaunchTask)
+)
+/**
+ * serverExe 绝对不能写绝对路径：ST 适配器是 `switch (serverExe)` 认名字的，
+ * 传路径会抛 `Gdb server "…" not known or misspelled`。
+ */
+check('ST-Link：不写 serverExe 绝对路径', stCfg?.serverExe === undefined, String(stCfg?.serverExe))
+check(
+  'ST-Link：imagesAndSymbols 指向 Debug 固件',
+  Array.isArray(stCfg?.imagesAndSymbols) &&
+    String((stCfg?.imagesAndSymbols as Array<{ imageFileName: string }>)[0].imageFileName).endsWith(
+      'build/Debug/demo.elf'
+    ),
+  JSON.stringify(stCfg?.imagesAndSymbols)
+)
+check(
+  'ST-Link：liveWatch 的 samplesPerSecond 是字符串（ST schema 要求）',
+  typeof (stCfg?.liveWatch as { samplesPerSecond?: unknown })?.samplesPerSecond === 'string',
+  JSON.stringify(stCfg?.liveWatch)
+)
+
+const jlCfg = multiLaunch.configurations.find((c) => c.type === 'jlinkgdbtarget')
+check('J-Link：生成 jlinkgdbtarget 类型', Boolean(jlCfg), JSON.stringify(jlCfg?.type))
+check(
+  'J-Link：速度写的是枚举里的值',
+  jlCfg?.serverSpeed === undefined || ['1000', '4000'].includes(String(jlCfg?.serverSpeed)),
+  String(jlCfg?.serverSpeed)
+)
+
+// 脏数据不能把 launch.json 弄成空列表（否则 VSCode 里没有任何可调试项）
+const dirtyLaunch = generateLaunch(project, {
+  ...options,
+  debugTargets: ['不存在', 'probe', 'probe'] as never
+})
+check(
+  '多调试器：非法/重复的目标被清洗成一条',
+  dirtyLaunch.configurations.length === 1 && dirtyLaunch.configurations[0].type === 'cortex-debug',
+  dirtyLaunch.configurations.map((c) => c.type).join(' | ')
+)
+
+
 /**
  * 纯烧录走任务，而且**默认生成任务就是它** ——
  * Ctrl+Shift+B 一步「构建 + 烧录」，编译不过时依赖链自动停下不会去烧。
@@ -622,6 +751,54 @@ const evil = writeFiles({
 })
 check('拒绝越界写入', evil.errors.length === 1 && evil.written.length === 0, evil.errors.join('; '))
 
+// ==========================================================================
+// 3b. 写入失败也要留档
+// ==========================================================================
+//
+// 现场（2026-11-03）：用户工程 .vscode 下 5 个文件全报
+//   EPERM: operation not permitted, open '...\launch.json'
+// 隔一会儿单独用 Node 写同一个目录又是完全正常的 —— 说明是**瞬时占用**，
+// 而当时 writer.ts 是裸 writeFileSync，一次失败就判死。
+//
+// 另一半原因：文件带只读属性。这一半重试一辈子也救不回来，得先摘只读位。
+// 下面两个检查分别覆盖这两件事。
+
+section('3b. 写入失败也要留档（只读文件 / 历史明细）')
+
+const readOnlyFile = join(demo, '.vscode', 'settings.json')
+chmodSync(readOnlyFile, 0o444)
+const afterReadOnly = writeFiles({ projectRoot: demo, files, backup: false })
+check(
+  '只读文件也能写进去（先摘掉只读位再写）',
+  afterReadOnly.errors.length === 0,
+  afterReadOnly.errors.join('; ')
+)
+check('写完之后文件不是只读状态', (statSync(readOnlyFile).mode & 0o200) !== 0)
+
+// 失败条目长什么样 —— 这是用户「翻历史查原因」时唯一能看到的证据
+const failRecord = buildWriteRecord(
+  'C:\\proj',
+  ['C:\\proj\\.vscode\\launch.json'],
+  ['launch.json：EPERM，已重试 9 次 —— 被别的程序（VSCode / 杀毒软件）短暂占用，或文件是只读的'],
+  'snap-1'
+)
+check('失败写入记为 ok:false', failRecord.ok === false)
+check('标题里带失败数量', failRecord.title.includes('失败'), failRecord.title)
+check(
+  '明细里有文件名 + 错误码（不是只有数量）',
+  failRecord.detail.includes('launch.json') && failRecord.detail.includes('EPERM'),
+  failRecord.detail
+)
+check(
+  '失败条目带「重试写入」按钮，且排在最前',
+  failRecord.actions[0]?.kind === 'retry-write',
+  failRecord.actions.map((a) => a.kind).join(',')
+)
+check(
+  '失败条目仍保留「还原到这次写入前」',
+  failRecord.actions.some((a) => a.kind === 'restore-snapshot')
+)
+
 // ---- 重新检测：应能读到刚写入的文件 ----
 const after = scanProject(demo)
 check(
@@ -707,6 +884,20 @@ check('写入前产生了快照', snapId !== null, String(snapId))
 check('快照里记录了 5 个待改文件', snapMeta?.fileCount === 5, String(snapMeta?.fileCount))
 check('快照里 3 个是「写入前不存在」', snapMeta?.newFileCount === 3, String(snapMeta?.newFileCount))
 
+// ---- 写盘安全闸：快照存不下就不许写，且要带原因 ----
+//
+// 这条以前在五个调用点各写一遍，其中两处**没判返回值**（存快照失败照样写/照样删）。
+// 现在统一走 openSnapshot，所以这里直接测那个函数。
+const gateOk = openSnapshot(snapDemo, snapChanged)
+check('安全闸: 正常时放行并给出快照 id', gateOk.ok && Boolean(gateOk.id), gateOk.message)
+const gateEmpty = openSnapshot(snapDemo, [])
+check('安全闸: 没东西可存时拒绝写', !gateEmpty.ok && gateEmpty.id === null)
+check(
+  '安全闸: 拒绝时带上真实原因（用户唯一能自救的信息）',
+  gateEmpty.message.includes('没有需要快照的文件'),
+  gateEmpty.message
+)
+
 const snapWrite = writeFiles({ projectRoot: snapDemo, files, backup: false })
 check('写入成功', snapWrite.errors.length === 0, snapWrite.errors.join('; '))
 check(
@@ -755,6 +946,26 @@ check('用户模板 id 不会被误判成内置', !isBuiltinTemplateId('6f1c9a2e
 check('内置模板只写部分字段（没有写死固件名）', builtin.options.elfName === undefined)
 
 /**
+ * 「双调试器」样板。
+ *
+ * 用户的原话是「直接给我一个两个调试器都有的模板」—— 它的价值就在于
+ * **不需要任何额外操作**，选中就同时拿到 OpenOCD 和 ST-Link 两条配置。
+ * 这里把这一点钉住：谁敢把 debugTargets 删掉，自检立刻红。
+ */
+const dualBuiltin = BUILTIN_TEMPLATES.find((t) => t.id.endsWith('dap-link-plus-stlink'))
+check('内置模板里有「DAP-Link + ST-Link 双调试器」', Boolean(dualBuiltin), dualBuiltin?.name)
+check(
+  '双调试器样板：debugTargets 是 probe + stlink-gdbserver',
+  JSON.stringify(dualBuiltin?.options.debugTargets) === JSON.stringify(['probe', 'stlink-gdbserver']),
+  JSON.stringify(dualBuiltin?.options.debugTargets)
+)
+check(
+  '双调试器样板：探针仍是 CMSIS-DAP（OpenOCD 接线不变）',
+  dualBuiltin?.options.probeKey === 'cmsis-dap',
+  String(dualBuiltin?.options.probeKey)
+)
+
+/**
  * 关键回归：内置模板是「部分覆盖」，套用时**绝不能**把目标工程推导出来的
  * 固件名/芯片/构建目录/include 覆盖掉 —— 否则一个通用模板就会把
  * B 工程写成 A 工程的样子。
@@ -796,6 +1007,22 @@ check('内置模板不覆盖 include', adaptedBuiltin.includeDirs[0] === '/proj/
 check('内置模板不覆盖编译宏', adaptedBuiltin.defines[0] === 'BOARD_V2')
 check('内置模板不覆盖 C 标准', adaptedBuiltin.cStandard === 'c99', adaptedBuiltin.cStandard)
 check('内置模板不覆盖工具链目录', adaptedBuiltin.toolchainDir === 'C:/toolchain')
+
+/**
+ * 双调试器样板套用后必须真的带上那两条 —— 这条测的是 adaptTemplateOptions
+ * 有没有把 debugTargets 当「用户的选择」传下去（它确实在白名单里）。
+ */
+const adaptedDual = adaptTemplateOptions(dualBuiltin!.options, fakeBase)
+check(
+  '双调试器样板套用后仍是两条',
+  JSON.stringify(adaptedDual.debugTargets) === JSON.stringify(['probe', 'stlink-gdbserver']),
+  JSON.stringify(adaptedDual.debugTargets)
+)
+check(
+  '双调试器样板套用后仍不覆盖固件名（和其它模板一致）',
+  adaptedDual.elfName === 'demo',
+  adaptedDual.elfName
+)
 
 /**
  * 把内置样板「到底改了什么」钉死：它只该钉住探针和适配器速度，
@@ -1276,11 +1503,24 @@ extern const RC_ctrl_t *get_remote_control_point(void);
 put('application/remote_control.c', '#include "remote_control.h"\n#define SBUS_FORWARD_TO_USART1 1\n')
 put(
   'Src/freertos.c',
-  '#include "cmsis_os.h"\n/* USER CODE END Header */\n/* USER CODE BEGIN Variables */\n'
+  '#include "cmsis_os.h"\n/* USER CODE END Header */\n\nvoid MX_FREERTOS_Init(void)\n{\n  /* USER CODE BEGIN RTOS_THREADS */\n  /* USER CODE END RTOS_THREADS */\n}\n'
 )
 put('Middlewares/rtos/cmsis_os.h', '#pragma once\n')
 
 const vofaPack = loadPack('vofa')
+
+/**
+ * 按 render 类型取模板名。
+ *
+ * 自检里不重写一份 'vofa_config.h.tpl'：如果这么写，pack.json 改了模板名
+ * 自检还是绿的，等于没测。这里跟主进程走同一条路径 —— 由清单声明。
+ */
+function tplOf(kind: 'config' | 'bind'): string {
+  const spec = vofaPack?.generated.find((g) => g.render === kind)
+  if (!spec) throw new Error(`vofa 包的 generated 里没有 render=${kind} 的项`)
+  return spec.template
+}
+
 check('Pack: 能装载 vofa 包', vofaPack !== null && (vofaPack?.files.length ?? 0) > 0)
 check(
   'Pack: 包列表包含 vofa',
@@ -1288,6 +1528,41 @@ check(
   listPacks()
     .map((p) => p.id)
     .join(',')
+)
+
+// ---- 生成文件必须由清单声明用哪个渲染器（以前靠模板名里有没有 'config' 猜）----
+for (const brief of listPacks()) {
+  const m = loadPack(brief.id)
+  if (!m) continue
+  for (const g of m.generated) {
+    check(
+      `Pack: ${m.id}/${g.template} 声明了合法 render`,
+      g.render === 'config' || g.render === 'bind',
+      String(g.render)
+    )
+    check(
+      `Pack: ${m.id}/${g.template} 模板文件真实存在`,
+      readPackFile(m.id, g.template) !== null
+    )
+  }
+}
+
+// 缺 render 时必须报错，不能猜 —— 猜错会把变量表塞进绑定模板，写出编译不过的 .c
+let noRenderErr = ''
+try {
+  renderGenerated(
+    vofaPack!,
+    { template: 'vofa_config.h.tpl', to: 'x.h' } as never,
+    { params: {}, bindings: { pids: [], channels: [] } },
+    inspectProject(packRoot)
+  )
+} catch (err) {
+  noRenderErr = err instanceof Error ? err.message : String(err)
+}
+check(
+  'Pack: 清单缺 render 时直接报错（不猜渲染器）',
+  noRenderErr.includes('没写 render'),
+  noRenderErr
 )
 
 if (vofaPack) {
@@ -1401,7 +1676,7 @@ if (vofaPack) {
   )
 
   // ---- 生成内容 ----
-  const cfg = renderConfig(vofaPack, { ...compat.derived, sendHz: 50 }, facts)
+  const cfg = renderConfig(vofaPack, tplOf('config'), { ...compat.derived, sendHz: 50 }, facts)
   check('生成: RX_MODE=2（逐字节中断）', /#define VOFA_RX_MODE\s+2/.test(cfg))
   check('生成: USE_BUILTIN_IRQ=1', /#define VOFA_USE_BUILTIN_IRQ\s+1/.test(cfg))
   check(
@@ -1409,7 +1684,7 @@ if (vofaPack) {
     /#define VOFA_TX_HEADER\s+"bsp_usart\.h"/.test(cfg),
     cfg.match(/VOFA_TX_HEADER.*/)?.[0]
   )
-  const bind = renderBind(vofaPack, bindings, facts)
+  const bind = renderBind(vofaPack, tplOf('bind'), bindings, facts)
   check('生成: 绑定体带判空', bind.includes('if (get_yaw_motor_point() != NULL)'))
   check(
     '生成: PID 走对应的辅助函数',
@@ -1420,9 +1695,19 @@ if (vofaPack) {
     bind.includes('static fp32 vofa_mirror_') && bind.includes('void vofa_bind_tick(void)')
   )
   check('生成: include 了遥控器头文件', bind.includes('#include "remote_control.h"'))
+  /**
+   * bug 回归：模板里新增了 ${EXTERN_DECLS}，但运行中的主进程还是旧代码，
+   * 于是生成的 .c 里留下一行占位符，gcc 报「expected '=', ',', ';' before '{'」，
+   * 完全看不出是生成器版本对不上。现在渲染器发现残留就抛错中止写入。
+   */
+  check(
+    '生成: 不留任何未替换的占位符',
+    !/\$\{[A-Z_0-9]+\}/.test(cfg) && !/\$\{[A-Z_0-9]+\}/.test(bind),
+    (cfg + bind).match(/\$\{[A-Z_0-9]+\}/g)?.join('、')
+  )
 
   // ---- 写入 ----
-  const apply = applyPackInstall(plan)
+  const apply = applyPackCore(plan)
   check('写入: 成功且无错误', apply.ok, apply.errors.join(';'))
   check('写入: 拿到快照 id（拿不到就该中止）', Boolean(apply.snapshotId))
   // bug 回归：writeFileSync 不建父目录，漏了这步 application/vofa/ 会是空的
@@ -1465,11 +1750,371 @@ if (vofaPack) {
 }
 
 // ==========================================================================
+// 11b. 信号目录 / 映射表 / 动态串口 / 回调冲突
+// ==========================================================================
+
+section('11b. 信号目录 / 映射表 / 动态串口 / 回调冲突')
+
+const symRoot = join(sandbox, 'symbol-proj')
+const sput = (rel: string, body: string): void => {
+  const p = join(symRoot, rel)
+  mkdirSync(join(p, '..'), { recursive: true })
+  writeFileSync(p, body, 'utf8')
+}
+
+sput(
+  'CMakeLists.txt',
+  `cmake_minimum_required(VERSION 3.22)
+project(symdemo C CXX ASM)
+add_executable(\${CMAKE_PROJECT_NAME})
+target_sources(\${CMAKE_PROJECT_NAME} PRIVATE
+    Src/freertos.c
+)
+`
+)
+sput('Inc/main.h', '#pragma once\n#include "stm32f4xx_hal.h"\n')
+sput('Inc/usart.h', '#pragma once\n#include "main.h"\nextern UART_HandleTypeDef huart3;\n')
+sput(
+  'Src/usart.c',
+  '#include "usart.h"\nUART_HandleTypeDef huart3;\nDMA_HandleTypeDef hdma_usart3_tx;\n'
+)
+sput(
+  'bsp/bsp_usart.h',
+  '#pragma once\n#include <stdint.h>\nextern void usart3_tx_dma_enable(uint8_t *data, uint16_t len);\n'
+)
+sput(
+  'application/pid.h',
+  '#pragma once\ntypedef struct { float Kp, Ki, Kd, max_out, max_iout; } pid_type_def;\n'
+)
+sput(
+  'application/gimbal_task.h',
+  `#pragma once
+#include "pid.h"
+typedef struct gimbal_motor {
+    pid_type_def gyro_pid;
+    float absolute_angle;
+    struct gimbal_motor *child;
+} gimbal_motor_t;
+extern const gimbal_motor_t *get_yaw_motor_point(void);
+`
+)
+sput(
+  'application/remote_control.h',
+  `#pragma once
+#include <stdint.h>
+typedef struct {
+    struct {
+        int16_t ch[5];
+    } rc;
+} RC_ctrl_t;
+extern const RC_ctrl_t *get_remote_control_point(void);
+`
+)
+sput(
+  'application/remote_control.c',
+  `#include "remote_control.h"
+void HAL_UARTEx_RxEventCallback(void *huart, unsigned short Size)
+{
+    (void)huart;
+    (void)Size;
+}
+`
+)
+sput('application/globals.h', '#pragma once\nextern float global_vx;\nextern int16_t global_mode;\n')
+sput(
+  'application/globals.c',
+  `#include "globals.h"
+float global_vx;
+int16_t global_mode;
+
+/* 只在 .c 里定义、头文件没写 extern —— 扫描要能扫到，并自己补声明 */
+float only_in_c = 1.5f;
+float only_in_c2[3];
+
+/* 文件私有：能看见，但不能绑（别的编译单元取不到地址） */
+static pid_type_def file_pid;
+
+void SomeInit(void)
+{
+    pid_type_def local_pid;
+    (void)local_pid;
+}
+`
+)
+sput(
+  'Src/freertos.c',
+  '#include "cmsis_os.h"\n/* USER CODE END Header */\n\nvoid MX_FREERTOS_Init(void)\n{\n  /* USER CODE BEGIN RTOS_THREADS */\n  /* USER CODE END RTOS_THREADS */\n}\n'
+)
+sput('Middlewares/rtos/cmsis_os.h', '#pragma once\n')
+
+const symFacts = inspectProject(symRoot)
+const symCompat = checkPackCompat(vofaPack!, symRoot, symFacts)
+
+check(
+  '符号: 没有默认 huart1 时自动改用工程里的 huart3',
+  symCompat.derived.uart === 'huart3' && symCompat.uarts.some((u) => u.name === 'huart3'),
+  String(symCompat.derived.uart)
+)
+check(
+  '符号: 工程已有 HAL_UARTEx_RxEventCallback 时自动改逐字节中断',
+  symCompat.derived.rxMode === 'it',
+  String(symCompat.derived.rxMode)
+)
+check(
+  '符号: 合成工程不阻塞',
+  !symCompat.blocked,
+  JSON.stringify(symCompat.checks.filter((c) => c.level === 'err'))
+)
+
+const symScan = scanSymbols(symRoot)
+const symFlat = symScan.flat
+const kp = symFlat.find((n) => n.path.endsWith('gyro_pid.Kp'))
+const angle = symFlat.find((n) => n.path.endsWith('absolute_angle'))
+const rc0 = symFlat.find((n) => n.path.endsWith('rc.ch[0]'))
+const vx = symFlat.find((n) => n.name === 'global_vx')
+const pidNode = symFlat.find((n) => n.valueType === 'pid' && n.pidType === 'pid_type_def')
+
+check(
+  '符号: 扫到 PID 字段 Kp 及完整表达式',
+  Boolean(kp && kp.expr === 'get_yaw_motor_point()->gyro_pid.Kp'),
+  kp?.expr
+)
+check(
+  '符号: 扫到 float 成员（const 访问器下只能看）',
+  angle?.valueType === 'float' && angle?.access === 'watch',
+  `${angle?.valueType}/${angle?.access}`
+)
+check(
+  '符号: 匿名 struct 里的遥控数组也能展开',
+  rc0?.valueType === 'int' && rc0?.expr === 'get_remote_control_point()->rc.ch[0]',
+  rc0?.expr
+)
+check('符号: 全局 float 可看可调', vx?.access === 'both', String(vx?.access))
+
+// ---- 只认 extern 的时代：这两个变量以前根本扫不到 ----
+const onlyInC = symScan.tree.find((n) => n.name === 'only_in_c')
+const onlyInC2 = symScan.tree.find((n) => n.name === 'only_in_c2')
+check(
+  '符号: .c 里定义、头文件没写 extern 的变量也能扫到',
+  Boolean(onlyInC && onlyInC.valueType === 'float'),
+  `${onlyInC?.valueType}/${onlyInC?.file}:${onlyInC?.line}`
+)
+check(
+  '符号: 这类变量会带上自动补的 extern 声明',
+  onlyInC?.externDecl === 'extern float only_in_c;',
+  onlyInC?.externDecl
+)
+check(
+  '符号: 数组定义也能补声明（保留维度）',
+  onlyInC2?.externDecl === 'extern float only_in_c2[3];',
+  onlyInC2?.externDecl
+)
+check(
+  '符号: 头文件已声明 extern 的不再重复补（走 include 更干净）',
+  vx !== undefined && vx.externDecl === undefined && vx.include,
+  `${vx?.externDecl} / include=${vx?.include}`
+)
+check(
+  '符号: static 变量单独归到 statics，且不可绑定',
+  symScan.statics.some((n) => n.name === 'file_pid' && n.access === 'none'),
+  String(symScan.statics.length)
+)
+check(
+  '符号: static 变量名不会混进可绑定树',
+  !symScan.tree.some((n) => n.name === 'file_pid')
+)
+check(
+  '符号: 链接脚本符号被过滤掉',
+  !symScan.tree.some((n) => n.name === '_estack' || n.name === '_Min_Stack_Size')
+)
+check('符号: PID 识别为 tune 组', pidNode?.access === 'tune' && pidNode?.pidType === 'pid_type_def')
+check(
+  '符号: 函数内变量被标记为不可绑定',
+  symScan.locals.some((n) => n.name === 'local_pid' && n.access === 'none')
+)
+
+const symBindings = [
+  {
+    id: 'a',
+    name: 'yaw_gyro',
+    expr: 'get_yaw_motor_point()->gyro_pid',
+    type: 'pid_type_def',
+    valueType: 'pid' as const,
+    access: 'tune' as const,
+    guard: 'get_yaw_motor_point()',
+    source: 'scan' as const,
+    pidType: 'pid_type_def' as const,
+    fields: ['Kp', 'Ki', 'Kd', 'max_out', 'max_iout']
+  },
+  {
+    id: 'b',
+    name: 'yaw_angle',
+    expr: 'get_yaw_motor_point()->absolute_angle',
+    type: 'float',
+    valueType: 'float' as const,
+    access: 'watch' as const,
+    guard: 'get_yaw_motor_point()',
+    source: 'scan' as const
+  },
+  {
+    id: 'c',
+    name: 'rc_ch0',
+    expr: 'get_remote_control_point()->rc.ch[0]',
+    type: 'int16_t',
+    valueType: 'int' as const,
+    access: 'watch' as const,
+    guard: 'get_remote_control_point()',
+    source: 'scan' as const
+  },
+  {
+    id: 'd',
+    name: 'global_vx_tune',
+    expr: 'global_vx',
+    type: 'float',
+    valueType: 'float' as const,
+    access: 'tune' as const,
+    source: 'scan' as const
+  }
+]
+const symMap = {
+  version: 1 as const,
+  packId: 'vofa' as const,
+  updatedAt: 1,
+  bindings: symBindings,
+  params: {
+    uart: 'huart3',
+    sendHz: 50,
+    rxMode: 'it',
+    builtinIrq: true,
+    irqPriority: 5,
+    txFn: 'usart3_tx_dma_enable',
+    txHeader: 'bsp_usart.h',
+    txDma: 'hdma_usart3_tx'
+  }
+}
+const symPb = mapToPackBindings(symMap)
+check(
+  '映射: PID / 通道 / 单值参数分流正确',
+  symPb.pids.length === 1 && symPb.channels.length === 2 && (symPb.params?.length ?? 0) === 1,
+  `pids=${symPb.pids.length} channels=${symPb.channels.length} params=${symPb.params?.length ?? 0}`
+)
+const symBind = renderBind(vofaPack!, tplOf('bind'), symPb, symFacts)
+check(
+  '映射: 单值可调生成 vofa_reg_param',
+  symBind.includes('vofa_reg_param("global_vx_tune"'),
+  symBind.slice(0, 200)
+)
+check(
+  '映射: 非 float 通道生成镜像',
+  symBind.includes('static fp32 vofa_mirror_') &&
+    symBind.includes('get_remote_control_point()->rc.ch[0]')
+)
+
+// ---- 生成层：头文件没写 extern 的变量，绑定代码要自己补声明 ----
+const noDeclNode = symScan.tree.find((n) => n.name === 'only_in_c')
+const noDeclBind = renderBind(
+  vofaPack!,
+  tplOf('bind'),
+  mapToPackBindings({
+    version: 1,
+    packId: 'vofa',
+    updatedAt: 0,
+    bindings: noDeclNode ? [bindingFromSymbol(noDeclNode, 'tune', [])] : []
+  }),
+  symFacts
+)
+check(
+  '生成: 头文件没声明的变量，vofa_bind.c 自己补 extern（用户不用改源码）',
+  noDeclBind.includes('extern float only_in_c;'),
+  noDeclBind.split('\n').filter((l) => /^\s*extern\s/.test(l)).join(' | ')
+)
+check(
+  '生成: 补的声明在注册之前（否则编译报未声明）',
+  noDeclBind.indexOf('extern float only_in_c;') < noDeclBind.indexOf('vofa_reg_param("only_in_c"'),
+  '顺序检查'
+)
+
+const savedMap = saveVofaMap(symRoot, symMap)
+check(
+  '映射: 能写进 application/vofa/vofa_map.json',
+  savedMap.ok && Boolean(vofaMapPath(symRoot)),
+  savedMap.error
+)
+const loadedMap = loadVofaMap(symRoot)
+check('映射: 能原样读回', loadedMap?.bindings.length === 4 && loadedMap?.params?.uart === 'huart3')
+
+const symCfg = renderConfig(vofaPack!, tplOf('config'), symMap.params, symFacts)
+check('生成: 串口跟参数走（huart3）', /#define VOFA_UART\s+huart3/.test(symCfg))
+check('生成: TX 函数跟参数走', /#define VOFA_TX_FN\(data, len\)\s+usart3_tx_dma_enable/.test(symCfg))
+let badHz = false
+try {
+  renderConfig(vofaPack!, tplOf('config'), { ...symMap.params, sendHz: 0 }, symFacts)
+} catch {
+  badHz = true
+}
+check('生成: sendHz=0 被拦下', badHz)
+
+const symPlan = planPackInstall(
+  {
+    packId: 'vofa',
+    root: symRoot,
+    params: symMap.params,
+    bindings: symPb,
+    map: symMap
+  },
+  symFacts
+)
+check(
+  '清单: 映射表进入改动清单',
+  symPlan.changes.some((c) => c.path === 'application/vofa/vofa_map.json')
+)
+check(
+  '清单: 不阻塞',
+  !symPlan.blocked,
+  JSON.stringify(symPlan.changes.filter((c) => c.action === 'skip'))
+)
+const symApply = applyPackCore(symPlan)
+check('写入: 模块 + 映射表成功', symApply.ok, symApply.errors.join(';'))
+const freel = readFileSync(join(symRoot, 'Src/freertos.c'), 'utf8')
+check('写入: freertos.c 补了 extern 声明', freel.includes('extern void vofa_task'))
+check('写入: freertos.c 在 RTOS_THREADS 里创建任务', freel.includes('osThreadCreate(osThread(vofa)'))
+/*
+  extern 声明必须在 USER CODE 区内。写进 #include 区的话，CubeMX 下次
+  重新生成 freertos.c 会把它一起抹掉 —— 任务创建还在、声明没了，编译直接报错，
+  而且报错信息跟 CubeMX 完全看不出关系。
+*/
+check(
+  '写入: extern 声明在 USER CODE 区内（CubeMX 重新生成不会抹掉）',
+  freel.indexOf('extern void vofa_task') > freel.indexOf('/* USER CODE BEGIN RTOS_THREADS */')
+)
+check('写入: 映射表落盘', existsSync(join(symRoot, 'application/vofa/vofa_map.json')))
+if (symApply.snapshotId) {
+  const symBack = restoreSnapshot(symRoot, symApply.snapshotId)
+  check(
+    '还原: 信号工程回到原样（映射表回到写入前的那份）',
+    symBack.errors.length === 0 &&
+      !existsSync(join(symRoot, 'application/vofa/vofa_task.c')) &&
+      loadVofaMap(symRoot)?.bindings.length === 4
+  )
+}
+
+// 回调冲突：工程里同时有 RxEvent 和 RxCplt 时不能再装
+sput('application/conflict.c', 'void HAL_UART_RxCpltCallback(void *huart) { (void)huart; }\n')
+const conflictFacts = inspectProject(symRoot)
+const conflictCompat = checkPackCompat(vofaPack!, symRoot, conflictFacts)
+check('兼容性: 两个 HAL 回调都被占用时阻塞', conflictCompat.blocked)
+
+// CMSIS-OS v2：不支持 osThreadDef，必须明确阻塞
+sput('Middlewares/rtos/cmsis_os.h', '#pragma once\nvoid osThreadNew(void);\n')
+const v2Facts = inspectProject(symRoot)
+const v2Compat = checkPackCompat(vofaPack!, symRoot, v2Facts)
+check(
+  '兼容性: CMSIS-OS v2 阻塞并说明原因',
+  v2Compat.blocked && v2Compat.checks.some((c) => c.label === 'CMSIS-OS 版本')
+)
+
+// ==========================================================================
 // 12. 构建图：include() / add_subdirectory() / 变量 / GLOB
-//
-// 这一节的由来：有工程把源文件清单放在 include() 进来的 .cmake 里（根 CMakeLists
-// 里那个 target_sources 是 CubeMX 生成的空占位），只看根文件就会把它们全报成
-// 「不在构建里」—— 用户照着点「加入构建」会重复编译、链接报 multiple definition。
 // ==========================================================================
 
 section('12. 构建图：include / add_subdirectory / 变量 / GLOB')
@@ -1832,8 +2477,7 @@ check(
 check('LiveWatch: 默认设置里是开启的', DEFAULT_SETTINGS.liveWatch === true)
 check(
   'LiveWatch: 设置缺字段时按开启处理（老 settings.json 兼容）',
-  JSON.stringify(lwOf({} as Record<string, unknown>)) ===
-    '{"enabled":true,"samplesPerSecond":4}',
+  JSON.stringify(lwOf({} as Record<string, unknown>)) === '{"enabled":true,"samplesPerSecond":4}',
   'defaultGenOptions 没有把默认值带进来'
 )
 
@@ -1877,18 +2521,14 @@ function parseFirstProject(raw: string): { name?: string } | null {
 
 check(
   '模板导入：认带 format 包装的文件',
-  parseFirstProject(
-    JSON.stringify({ format: 'cv-studio-template', version: 1, template: sampleTpl })
-  )?.name === '测试模板'
+  parseFirstProject(JSON.stringify({ format: 'cv-studio-template', version: 1, template: sampleTpl }))
+    ?.name === '测试模板'
 )
 check(
   '模板导入：也认裸模板（兼容手写文件）',
   parseFirstProject(JSON.stringify(sampleTpl))?.name === '测试模板'
 )
-check(
-  '模板导入：缺 target 的文件被拒绝',
-  parseFirstProject(JSON.stringify({ name: 'x' })) === null
-)
+check('模板导入：缺 target 的文件被拒绝', parseFirstProject(JSON.stringify({ name: 'x' })) === null)
 check('模板导入：非 JSON 被拒绝', parseFirstProject('not json at all') === null)
 check(
   '模板导入：空 options 也能进（老模板可能没填参数）',
@@ -1907,104 +2547,107 @@ check(
 // ==========================================================================
 
 {
-section('17. 模板文件格式')
+  section('17. 模板文件格式')
 
-const sampleProject = {
-  name: '标准步兵',
-  note: 'F407',
-  target: { editor: 'vscode', buildSystem: 'cmake', probe: 'cmsis-dap' },
-  options: { device: 'STM32F407IGH6' },
-  files: { launch: '{}' }
-}
-const samplePreset = {
-  packId: 'remote-vt13',
-  name: '标准步兵-VT13',
-  note: 'USART1',
-  params: { usart: 'USART1', demoMode: false }
-}
+  const sampleProject = {
+    name: '标准步兵',
+    note: 'F407',
+    target: { editor: 'vscode', buildSystem: 'cmake', probe: 'cmsis-dap' },
+    options: { device: 'STM32F407IGH6' },
+    files: { launch: '{}' }
+  }
+  const samplePreset = {
+    packId: 'remote-vt13',
+    name: '标准步兵-VT13',
+    note: 'USART1',
+    params: { usart: 'USART1', demoMode: false }
+  }
 
-// ---- 新格式：混装 ----
-{
-  const file = buildTemplateFile(
-    [sampleProject as never],
-    [samplePreset as never]
-  )
-  const raw = JSON.stringify(file)
-  const tplParsed = parseTemplateFile(raw)
+  // ---- 新格式：混装 ----
+  {
+    const file = buildTemplateFile([sampleProject as never], [samplePreset as never])
+    const raw = JSON.stringify(file)
+    const tplParsed = parseTemplateFile(raw)
 
-  check('模板文件: 新格式识别为 v1', tplParsed.format === 'v1', tplParsed.format)
-  check('模板文件: 工程配置模板解析出 1 条', tplParsed.projectTemplates.length === 1)
-  check('模板文件: 模块包模板解析出 1 条', tplParsed.packPresets.length === 1)
-  check('模板文件: 没有跳过任何条目', tplParsed.skipped === 0)
-  check(
-    '模板文件: 工程模板名字正确',
-    tplParsed.projectTemplates[0]?.name === '标准步兵',
-    tplParsed.projectTemplates[0]?.name
-  )
-  check(
-    '模板文件: 模块包模板 packId 正确',
-    tplParsed.packPresets[0]?.packId === 'remote-vt13',
-    tplParsed.packPresets[0]?.packId
-  )
-  check(
-    '模板文件: params 完整保留',
-    tplParsed.packPresets[0]?.params['usart'] === 'USART1'
-  )
-  check(
-    '模板文件: 导入时清了 id（会生成新的，不覆盖本地）',
-    tplParsed.projectTemplates[0]?.id === '' && tplParsed.packPresets[0]?.id === ''
-  )
-}
+    check('模板文件: 新格式识别为 v1', tplParsed.format === 'v1', tplParsed.format)
+    check('模板文件: 工程配置模板解析出 1 条', tplParsed.projectTemplates.length === 1)
+    check('模板文件: 模块包模板解析出 1 条', tplParsed.packPresets.length === 1)
+    check('模板文件: 没有跳过任何条目', tplParsed.skipped === 0)
+    check(
+      '模板文件: 工程模板名字正确',
+      tplParsed.projectTemplates[0]?.name === '标准步兵',
+      tplParsed.projectTemplates[0]?.name
+    )
+    check(
+      '模板文件: 模块包模板 packId 正确',
+      tplParsed.packPresets[0]?.packId === 'remote-vt13',
+      tplParsed.packPresets[0]?.packId
+    )
+    check('模板文件: params 完整保留', tplParsed.packPresets[0]?.params['usart'] === 'USART1')
+    check(
+      '模板文件: 导入时清了 id（会生成新的，不覆盖本地）',
+      tplParsed.projectTemplates[0]?.id === '' && tplParsed.packPresets[0]?.id === ''
+    )
+  }
 
-// ---- 旧格式兼容 ----
-{
-  const legacy = JSON.stringify({
-    format: 'cv-studio-template',
-    version: 1,
-    template: sampleProject
-  })
-  const tplParsed = parseTemplateFile(legacy)
-  check('模板文件: 旧单模板格式仍能导入', tplParsed.format === 'legacy', tplParsed.format)
-  check('模板文件: 旧格式解析出 1 条', tplParsed.projectTemplates.length === 1)
-}
+  // ---- 旧格式兼容 ----
+  {
+    const legacy = JSON.stringify({
+      format: 'cv-studio-template',
+      version: 1,
+      template: sampleProject
+    })
+    const tplParsed = parseTemplateFile(legacy)
+    check('模板文件: 旧单模板格式仍能导入', tplParsed.format === 'legacy', tplParsed.format)
+    check('模板文件: 旧格式解析出 1 条', tplParsed.projectTemplates.length === 1)
+  }
 
-// ---- 裸对象 ----
-{
-  const bareProject = parseTemplateFile(JSON.stringify(sampleProject))
-  check('模板文件: 裸工程模板对象能识别', bareProject.projectTemplates.length === 1)
+  // ---- 裸对象 ----
+  {
+    const bareProject = parseTemplateFile(JSON.stringify(sampleProject))
+    check('模板文件: 裸工程模板对象能识别', bareProject.projectTemplates.length === 1)
 
-  const barePreset = parseTemplateFile(JSON.stringify(samplePreset))
-  check('模板文件: 裸模块包模板对象能识别', barePreset.packPresets.length === 1)
-}
+    const barePreset = parseTemplateFile(JSON.stringify(samplePreset))
+    check('模板文件: 裸模块包模板对象能识别', barePreset.packPresets.length === 1)
+  }
 
-// ---- 坏输入 ----
-{
-  check('模板文件: 非 JSON 返回空', parseTemplateFile('not json').projectTemplates.length === 0)
-  check('模板文件: 空数组返回空', parseTemplateFile('[]').skipped === 1)
+  // ---- 坏输入 ----
+  {
+    check('模板文件: 非 JSON 返回空', parseTemplateFile('not json').projectTemplates.length === 0)
+    check('模板文件: 空数组返回空', parseTemplateFile('[]').skipped === 1)
 
-  // 混进一条坏的，好的照样能进
-  const mixed = JSON.stringify({
-    format: 'cv-studio-templates',
-    version: 1,
-    entries: [
-      { kind: 'project', template: sampleProject },
-      { kind: 'pack', preset: { name: '缺 packId', params: {} } }, // 坏
-      { kind: 'unknown-kind' }, // 坏
-      { kind: 'pack', preset: samplePreset }
-    ]
-  })
-  const tplParsed = parseTemplateFile(mixed)
-  check('模板文件: 坏条目只跳过自己，不连累其它', tplParsed.projectTemplates.length === 1 && tplParsed.packPresets.length === 1)
-  check('模板文件: 跳过数统计正确', tplParsed.skipped === 2, `实际 ${tplParsed.skipped}`)
-}
+    // 混进一条坏的，好的照样能进
+    const mixed = JSON.stringify({
+      format: 'cv-studio-templates',
+      version: 1,
+      entries: [
+        { kind: 'project', template: sampleProject },
+        { kind: 'pack', preset: { name: '缺 packId', params: {} } }, // 坏
+        { kind: 'unknown-kind' }, // 坏
+        { kind: 'pack', preset: samplePreset }
+      ]
+    })
+    const tplParsed = parseTemplateFile(mixed)
+    check(
+      '模板文件: 坏条目只跳过自己，不连累其它',
+      tplParsed.projectTemplates.length === 1 && tplParsed.packPresets.length === 1
+    )
+    check('模板文件: 跳过数统计正确', tplParsed.skipped === 2, `实际 ${tplParsed.skipped}`)
+  }
 
-// ---- 格式说明 ----
-{
-  check('格式说明: 包含 format 字段名', TEMPLATE_FORMAT_DOC.includes('cv-studio-templates'))
-  check('格式说明: 说明 kind 两种取值', TEMPLATE_FORMAT_DOC.includes('"project"') && TEMPLATE_FORMAT_DOC.includes('"pack"'))
-  check('格式说明: 有示例代码块', TEMPLATE_FORMAT_DOC.includes('```') || TEMPLATE_FORMAT_DOC.includes('{\n'))
-  check('格式说明: 提到 packId 必须已安装', TEMPLATE_FORMAT_DOC.includes('packId'))
-}
+  // ---- 格式说明 ----
+  {
+    check('格式说明: 包含 format 字段名', TEMPLATE_FORMAT_DOC.includes('cv-studio-templates'))
+    check(
+      '格式说明: 说明 kind 两种取值',
+      TEMPLATE_FORMAT_DOC.includes('"project"') && TEMPLATE_FORMAT_DOC.includes('"pack"')
+    )
+    check(
+      '格式说明: 有示例代码块',
+      TEMPLATE_FORMAT_DOC.includes('```') || TEMPLATE_FORMAT_DOC.includes('{\n')
+    )
+    check('格式说明: 提到 packId 必须已安装', TEMPLATE_FORMAT_DOC.includes('packId'))
+  }
 } // end 17
 
 // ==========================================================================
@@ -2034,10 +2677,7 @@ const samplePreset = {
     '内置模板: id 都带 __builtin__ 前缀',
     allBuiltin.every((p) => isBuiltinPresetId(p.id))
   )
-  check(
-    '内置模板: id 不重复',
-    new Set(allBuiltin.map((p) => p.id)).size === allBuiltin.length
-  )
+  check('内置模板: id 不重复', new Set(allBuiltin.map((p) => p.id)).size === allBuiltin.length)
   check(
     '内置模板: 都归属到真实的模块包',
     allBuiltin.every((p) => p.packId === 'remote-vt13' || p.packId === 'vofa')
@@ -2050,10 +2690,7 @@ const samplePreset = {
     '内置模板: VT13 有一个「跳过 CubeMX」的选项',
     vt13Builtin.some((p) => p.params['demoMode'] === true)
   )
-  check(
-    '内置模板: isBuiltinPresetId 能区分用户模板',
-    !isBuiltinPresetId('a1b2c3d4-user-made')
-  )
+  check('内置模板: isBuiltinPresetId 能区分用户模板', !isBuiltinPresetId('a1b2c3d4-user-made'))
 }
 
 // ==========================================================================
@@ -2114,7 +2751,10 @@ const samplePreset = {
   check('快照降级: 多级降级仍能存下', r3.id !== null, r3.error)
   if (r3.id) {
     const l3 = listSnapshots(proj2)
-    check('快照降级: 多级降级后列表能找到', l3.some((m) => m.id === r3.id))
+    check(
+      '快照降级: 多级降级后列表能找到',
+      l3.some((m) => m.id === r3.id)
+    )
   }
   try {
     chmodSync(proj2, 0o755)
@@ -2147,6 +2787,575 @@ const samplePreset = {
   check('版本比较: 忽略 v 前缀', compareVersion('v2.1.0', '2.0.0') > 0)
   check('版本比较: 忽略预发布后缀', compareVersion('2.0.0-beta', '2.0.0') === 0)
   check('版本比较: 段数不同时短的补零', compareVersion('2.1', '2.1.0') === 0)
+}
+
+// ==========================================================================
+// 21. 地址表：ELF 符号 -> 地址 -> 固件命令
+// ==========================================================================
+//
+// 这条路的正确性没法靠「跑一遍界面」验证，必须在这一层把字节级的东西钉死：
+//   · 符号表解析（偏移错了全盘错，而且界面上看起来还挺像）
+//   · 生成的下发命令串（固件按空格分词，多一个空格、少一个 0x 都会静默失败）
+//   · 两处常量（ADDR_SLOT_MAX / VOFA_ADDR_SLOT_MAX）必须一致
+
+{
+  section('21. 地址表：ELF 符号解析 / 下发命令')
+
+  /** 拼一个最小的 ELF32 小端：只有 .shstrtab / .symtab / .strtab / .data / .bss */
+  const buildElf = (
+    syms: Array<{ name: string; addr: number; size: number; type: number; bind: number; shndx: number }>
+  ): Buffer => {
+    const secNames = ['', '.data', '.bss', '.symtab', '.strtab', '.shstrtab']
+    let shstr = ''
+    const shstrOff: number[] = []
+    for (const n of secNames) {
+      shstrOff.push(shstr.length)
+      shstr += `${n}\0`
+    }
+
+    let strtab = '\0'
+    const symNameOff: number[] = []
+    for (const s of syms) {
+      symNameOff.push(strtab.length)
+      strtab += `${s.name}\0`
+    }
+
+    const symtabSize = 16 * (syms.length + 1)
+    const strtabBuf = Buffer.from(strtab, 'latin1')
+    const shstrBuf = Buffer.from(shstr, 'latin1')
+    const shstrtabSize = shstrBuf.length
+
+    // 内容排布：ehdr | .data | .strtab | .symtab | .shstrtab | 节头表
+    const ehsize = 52
+    const dataOff = ehsize
+    const strtabOff = dataOff + 16
+    const symtabOff = strtabOff + strtabBuf.length
+    const shstrOff2 = symtabOff + symtabSize
+    const shoff = (shstrOff2 + shstrtabSize + 3) & ~3
+
+    const buf = Buffer.alloc(shoff + 40 * secNames.length)
+
+    // ---- ELF 头 ----
+    buf.writeUInt32BE(0x7f454c46, 0)
+    buf[4] = 1 // ELFCLASS32
+    buf[5] = 1 // little endian
+    buf[6] = 1 // version
+    buf.writeUInt16LE(2, 0x10) // e_type = EXEC
+    buf.writeUInt16LE(40, 0x12) // e_machine = ARM
+    buf.writeUInt32LE(shoff, 0x20)
+    buf.writeUInt16LE(ehsize, 0x28)
+    buf.writeUInt16LE(40, 0x2e) // e_shentsize
+    buf.writeUInt16LE(secNames.length, 0x30)
+    buf.writeUInt16LE(5, 0x32) // .shstrtab 下标
+
+    // ---- .strtab / .shstrtab ----
+    strtabBuf.copy(buf, strtabOff)
+    shstrBuf.copy(buf, shstrOff2)
+
+    // ---- .symtab ----
+    let o = symtabOff + 16 // 跳过 0 号空符号
+    for (let i = 0; i < syms.length; i += 1) {
+      const s = syms[i]
+      buf.writeUInt32LE(symNameOff[i], o)
+      buf.writeUInt32LE(s.addr, o + 4)
+      buf.writeUInt32LE(s.size, o + 8)
+      buf[o + 0x0c] = (s.bind << 4) | s.type
+      buf.writeUInt16LE(s.shndx, o + 0x0e)
+      o += 16
+    }
+
+    // ---- 节头表 ----
+    const wSec = (i: number, nameOff: number, type: number, addr: number, off: number, size: number, link: number, entsize: number): void => {
+      const at = shoff + i * 40
+      buf.writeUInt32LE(nameOff, at)
+      buf.writeUInt32LE(type, at + 4)
+      buf.writeUInt32LE(addr, at + 8) // .data 要真的带地址，解析器靠它判断 RAM
+      buf.writeUInt32LE(off, at + 0x10)
+      buf.writeUInt32LE(size, at + 0x14)
+      buf.writeUInt32LE(link, at + 0x18)
+      buf.writeUInt32LE(entsize, at + 0x24)
+    }
+    wSec(0, 0, 0, 0, 0, 0, 0, 0)
+    wSec(1, shstrOff[1], 1, 0x20000000, dataOff, 16, 0, 0)
+    wSec(2, shstrOff[2], 8, 0x20000010, dataOff, 16, 0, 0) // SHT_NOBITS
+    wSec(3, shstrOff[3], 2, 0, symtabOff, symtabSize, 4, 16)
+    wSec(4, shstrOff[4], 3, 0, strtabOff, strtabBuf.length, 0, 0)
+    wSec(5, shstrOff[5], 3, 0, shstrOff2, shstrtabSize, 0, 0)
+
+    return buf
+  }
+
+  const elf = buildElf([
+    { name: 'battery_voltage', addr: 0x20000000, size: 4, type: 1, bind: 1, shndx: 1 },
+    { name: 'INS_gyro', addr: 0x20000010, size: 2, type: 1, bind: 0, shndx: 2 },
+    { name: 'flash_table', addr: 0x08001000, size: 4, type: 1, bind: 1, shndx: 1 },
+    { name: 'accel_buf', addr: 0x20000012, size: 12, type: 1, bind: 0, shndx: 2 },
+    { name: 'max_angle.2', addr: 0x20000004, size: 4, type: 1, bind: 0, shndx: 1 },
+    { name: 'reset_handler', addr: 0x08000100, size: 0, type: 2, bind: 1, shndx: 1 }
+  ])
+
+  const vars = parseElfVars(elf)
+  check(
+    'ELF: 只留 RAM 里的全局/静态变量',
+    vars.length === 2 && vars.some((v) => v.name === 'battery_voltage') && vars.some((v) => v.name === 'INS_gyro'),
+    vars.map((v) => v.name).join(',')
+  )
+  check(
+    'ELF: flash 里的 const 表不收（拿不到、也改不了）',
+    !vars.some((v) => v.name === 'flash_table')
+  )
+  check('ELF: 结构体/数组（size 12）不收，按 float 读出来是垃圾', !vars.some((v) => v.name === 'accel_buf'))
+  check('ELF: 名字带点的编译器内部符号不收', !vars.some((v) => v.name.startsWith('max_angle')))
+  check('ELF: 函数符号不收（它不是变量）', !vars.some((v) => v.name === 'reset_handler'))
+
+  const gv = vars.find((v) => v.name === 'battery_voltage')
+  check('ELF: 读出正确地址', gv?.addr === 0x20000000, gv ? `0x${gv.addr.toString(16)}` : 'undefined')
+  check('ELF: 全局变量 isStatic=false', gv?.isStatic === false)
+  check('ELF: 节名跟着 shndx 走', gv?.section === '.data', gv?.section)
+
+  const sv = vars.find((v) => v.name === 'INS_gyro')
+  check('ELF: static 变量照样收（这条路比源码扫描强的地方）', sv?.isStatic === true)
+  check('ELF: 2 字节默认按 int16 解', sv?.kind === 'i16', sv?.kind)
+  check('ELF: 4 字节默认按 float 解', gv?.kind === 'f', gv?.kind)
+
+  let threw = ''
+  try {
+    parseElfVars(Buffer.from('this is not an elf at all', 'utf8'))
+  } catch (err) {
+    threw = (err as Error).message
+  }
+  check('ELF: 不是 ELF 文件时报错而不是返回空表', threw.length > 0, threw)
+
+  // ---- 下发命令 ----
+  const slots = [
+    { name: 'gyro_z', addr: 0x20001a3c, kind: 'i16' as const },
+    { name: 'battery_voltage', addr: 0x2000a7b0, kind: 'f' as const }
+  ]
+  const cmd = buildSlotCommands(slots)
+  check(
+    '命令: 先 ac 清表，槽号连续，地址带 0x',
+    cmd === 'ac;am 0 0x20001A3C i16;am 1 0x2000A7B0 f',
+    cmd
+  )
+  check('命令: hexAddr 补满 8 位', hexAddr(0x20) === '0x00000020', hexAddr(0x20))
+  check('命令: rd/wr 模板带上正确的类型', buildReadCommand(slots[0]) === 'rd 0x20001A3C i16' && buildWriteCommand(slots[0], '1.5') === 'wr 0x20001A3C i16 1.5')
+  check(
+    '命令: 通道对应关系按槽号顺序给出',
+    slotLegend(slots).join(' | ') === 'ch0  gyro_z  (i16) | ch1  battery_voltage  (f)',
+    slotLegend(slots).join(' | ')
+  )
+  check('命令: 超过槽上限时截断，不会生成固件不认的槽号', buildSlotCommands(new Array(20).fill(slots[0])).split(';').length === ADDR_SLOT_MAX + 1)
+  check('类型: kindFromSize 1/2/4 字节分别给 i8/i16/f', kindFromSize(1) === 'i8' && kindFromSize(2) === 'i16' && kindFromSize(4) === 'f')
+
+  // ---- 存进工程的那份地址表（application/vofa/vofa_addr.json）----
+  //
+  // 这一小块的功能是「记住用户勾了谁」，看起来最不值钱，但它是唯一会被
+  // 用户和 git 直接看到的东西 —— 地址写成十进制、槽顺序被打乱、类型被写成
+  // 固件不认的字符串，都会让人以为「工具把我的表弄坏了」。
+  const tbl = {
+    version: 1 as const,
+    packId: 'vofa' as const,
+    updatedAt: 1,
+    slots: [
+      { name: 'gyro_z', addr: 0x20001a3c, kind: 'i16' as const },
+      { name: 'battery_voltage', addr: 0x2000a7b0, kind: 'f' as const }
+    ]
+  }
+  const tblText = serializeAddrTable(tbl)
+  check(
+    '存表: 地址写成 0x 而不是十进制（对着 map 文件要认得出来）',
+    tblText.includes('0x20001A3C') && !tblText.includes('537406780')
+  )
+
+  const tblBack = normalizeAddrTable(JSON.parse(tblText))
+  check(
+    '存表: 序列化再读回，名字/地址/顺序都不变',
+    !!tblBack &&
+      tblBack.slots.length === 2 &&
+      tblBack.slots[0].name === 'gyro_z' &&
+      tblBack.slots[0].addr === 0x20001a3c &&
+      tblBack.slots[1].kind === 'f',
+    JSON.stringify(tblBack?.slots)
+  )
+  check(
+    '存表: 认不出的槽只跳过它自己，不连累整张表',
+    normalizeAddrTable({
+      slots: [{ name: 'a', addr: 'not-an-address' }, { name: 'b', addr: 0x20000000, kind: 'u32' }]
+    })?.slots.length === 1
+  )
+  check(
+    '存表: 类型写错按 float 兜底（别把槽弄丢）',
+    normalizeAddrTable({ slots: [{ name: 'a', addr: 0x20000000, kind: 'double' }] })?.slots[0].kind === 'f'
+  )
+  check(
+    '存表: 超过槽上限时截断（固件只有 16 个槽）',
+    (normalizeAddrTable({ slots: new Array(40).fill({ name: 'x', addr: 0x20000000, kind: 'f' }) })
+      ?.slots.length ?? 0) === ADDR_SLOT_MAX
+  )
+  check(
+    '存表: 不是对象就返回 null（界面按空表处理，不当成错误弹窗）',
+    normalizeAddrTable('nonsense') === null && normalizeAddrTable({}) === null
+  )
+
+  // ---- 两处常量必须一致，否则界面能勾上的槽固件会拒绝 ----
+  const fw = readPackFile('vofa', 'vofa_task.c') ?? ''
+  check(
+    `固件: VOFA_ADDR_SLOT_MAX 与界面 ADDR_SLOT_MAX 一致（${ADDR_SLOT_MAX}）`,
+    new RegExp(`#define\\s+VOFA_ADDR_SLOT_MAX\\s+${ADDR_SLOT_MAX}u`).test(fw),
+    (/#define\s+VOFA_ADDR_SLOT_MAX\s+\d+u/.exec(fw) ?? ['没找到'])[0]
+  )
+  check(
+    '固件: 每个类型标记都能被 vofa_type_parse 认出来',
+    MEM_KINDS.every((k) => fw.includes(`strcmp(s, "${k}")`)),
+    MEM_KINDS.filter((k) => !fw.includes(`strcmp(s, "${k}")`)).join(',')
+  )
+  check(
+    '固件: 地址越界会被挡掉（越界读直接 HardFault）',
+    fw.includes('vofa_mem_ok') && fw.includes('_estack')
+  )
+  check(
+    '固件: 帧里地址槽排在注册通道之前（上位机按这个顺序解释 ch0…）',
+    fw.indexOf('for (uint8_t i = 0; i < vofa_mem_count; i++)') <
+      fw.indexOf('for (uint16_t i = 0; i < vofa_channel_count; i++)')
+  )
+}
+
+// ==========================================================================
+// 22. .ioc 直改：波特率 / RX DMA / NVIC
+// ==========================================================================
+//
+// 这一段全是**字节级**断言，因为出错的方式都很安静：
+//   · IPParameters 漏写 BaudRate → CubeMX 直接忽略波特率，生成出来还是旧的
+//   · 新加 DMA 没配 NVIC 的「生成中断函数」位 → NVIC 开着、函数没有，
+//     中断一来就掉进 Default_Handler 死循环
+//   · 把工程里已有的 USART_INT 入口再让 CubeMX 生成一份 → 链接期重复定义
+// 这些在界面上都看不出来，只能在这一层钉住。
+
+{
+  section('22. .ioc 直改：波特率 / RX DMA / NVIC')
+
+  check(
+    '外设名: huart1→USART1，huart4→UART4（芯片里就叫 UART4），hlpuart1→LPUART1',
+    peripheralOf('huart1') === 'USART1' &&
+      peripheralOf('huart4') === 'UART4' &&
+      peripheralOf('huart6') === 'USART6' &&
+      peripheralOf('hlpuart1') === 'LPUART1' &&
+      peripheralOf('nonsense') === null,
+    [peripheralOf('huart1'), peripheralOf('huart4'), peripheralOf('hlpuart1')].join(',')
+  )
+
+  const iocRoot = join(sandbox, 'ioc-proj')
+  const iocPut = (rel: string, body: string, crlf = false): void => {
+    const p = join(iocRoot, rel)
+    mkdirSync(join(p, '..'), { recursive: true })
+    writeFileSync(p, crlf ? body.replace(/\n/g, '\r\n') : body, 'utf8')
+  }
+
+  const baseIoc = [
+    'Mcu.Family=STM32F4',
+    'Mcu.CPN=STM32F407IGH6',
+    'USART1.IPParameters=VirtualMode',
+    'USART1.VirtualMode=VM_ASYNC',
+    'USART3.BaudRate=100000',
+    'USART3.IPParameters=VirtualMode,BaudRate,Parity',
+    'USART3.Parity=PARITY_EVEN',
+    'USART3.VirtualMode=VM_ASYNC',
+    'Dma.Request0=USART3_RX',
+    'Dma.USART3_RX.0.Instance=DMA1_Stream1',
+    'Dma.RequestsNb=1',
+    'ProjectManager.AskForMigrate=true',
+    ''
+  ].join('\n')
+
+  iocPut('demo.ioc', baseIoc, true) // CRLF：CubeMX 写出来的就是这种
+  iocPut(
+    'Src/usart.c',
+    '#include "usart.h"\nUART_HandleTypeDef huart1;\nvoid MX_USART1_UART_Init(void)\n{\n  huart1.Init.BaudRate = 115200;\n}\n'
+  )
+
+  // ---- 波特率 ----
+  const baudPlan = planUartIoc(iocRoot, {
+    uart: 'huart1',
+    baud: 921600,
+    rxMode: 'it',
+    dmaMode: 'circular',
+    builtinIrq: true,
+    irqPriority: 5
+  })
+  check('ioc: 能识别出 .ioc', baudPlan.ok && baudPlan.relPath === 'demo.ioc', baudPlan.error)
+  const baudKeys = baudPlan.changes.map((c) => c.key)
+  check(
+    'ioc: 写 BaudRate，并把它补进 IPParameters（漏写等于没改）',
+    baudKeys.includes('USART1.BaudRate') && baudKeys.includes('USART1.IPParameters'),
+    baudKeys.join(',')
+  )
+  check(
+    'ioc: IPParameters 只追加、不覆盖（USART3 的 Parity 不能被抹掉）',
+    (baudPlan.after ?? '').includes('USART3.IPParameters=VirtualMode,BaudRate,Parity') &&
+      (baudPlan.after ?? '').includes('USART1.IPParameters=VirtualMode,BaudRate'),
+    ''
+  )
+  check(
+    'ioc: 换行符保持 CRLF（改成 LF 的话 git diff 会变成整个文件都改了）',
+    (baudPlan.after ?? '').includes('\r\n') && !/(?<!\r)\n/.test(baudPlan.after ?? ''),
+    ''
+  )
+  check(
+    'ioc: 不碰串口自己的 NVIC（工程里已经有中断入口，再生成一份会重复定义）',
+    !/NVIC\.USART1_IRQn=/.test(baudPlan.after ?? ''),
+    ''
+  )
+
+  // ---- 什么都不用改时，不要凭空造出一个改动（否则每次都白跑一次 CubeMX）----
+  const noop = planUartIoc(iocRoot, {
+    uart: 'huart1',
+    baud: 115200, // .ioc 里没写 BaudRate = CubeMX 默认就是 115200
+    rxMode: 'it',
+    dmaMode: 'circular',
+    builtinIrq: true,
+    irqPriority: 5
+  })
+  check(
+    'ioc: 波特率本来就一样时不写盘、也不碰 AskForMigrate（避免白跑 CubeMX）',
+    noop.ok && noop.changes.length === 0 && noop.after === noop.before,
+    noop.changes.map((c) => c.key).join(',')
+  )
+
+  // ---- 未启用的串口：必须拒绝，而不是写一堆没人认的键 ----
+  const notEnabled = planUartIoc(iocRoot, {
+    uart: 'huart7',
+    baud: 115200,
+    rxMode: 'it',
+    dmaMode: 'circular',
+    builtinIrq: true,
+    irqPriority: 5
+  })
+  check(
+    'ioc: 串口没在 CubeMX 里启用时明确报错（不静默写无效配置）',
+    !notEnabled.ok && (notEnabled.error ?? '').includes('UART7.VirtualMode'),
+    notEnabled.error
+  )
+
+  // ---- RX DMA ----
+  const dmaPlan = planUartIoc(iocRoot, {
+    uart: 'huart1',
+    baud: 921600,
+    rxMode: 'dma',
+    dmaMode: 'circular',
+    builtinIrq: true,
+    irqPriority: 5
+  })
+  const dmaText = dmaPlan.after ?? ''
+  check(
+    'ioc: 新加 RX DMA 用最小空槽，RequestsNb 跟着加（少写 CubeMX 会忽略最后一条）',
+    /Dma\.Request1=USART1_RX/.test(dmaText) && /Dma\.RequestsNb=2/.test(dmaText),
+    (dmaText.match(/Dma\.RequestsNb=\d+/) ?? [''])[0]
+  )
+  check(
+    'ioc: F407 上 USART1_RX 走 DMA2_Stream5（硬件连线决定的，不能瞎猜）',
+    /Dma\.USART1_RX\.1\.Instance=DMA2_Stream5/.test(dmaText)
+  )
+  check(
+    'ioc: DMA 默认写 CIRCULAR（固件按「偏移取增量」实现，单次模式会只收到第一条命令）',
+    /Dma\.USART1_RX\.1\.Mode=DMA_CIRCULAR/.test(dmaText),
+    (dmaText.match(/Dma\.USART1_RX\.1\.Mode=.*/) ?? [''])[0]
+  )
+  check(
+    'ioc: DMA 中断的 NVIC 第 4 位必须是 true —— 否则只使能中断不生成函数，跳 Default_Handler 死循环',
+    dmaText.includes(
+      'NVIC.DMA2_Stream5_IRQn=true\\:5\\:0\\:true\\:false\\:true\\:true\\:false\\:true\\:true'
+    ),
+    (dmaText.match(/NVIC\.DMA2_Stream5_IRQn=.*/) ?? [''])[0]
+  )
+
+  // 想用单次模式也要能选（会写 NORMAL，固件那边随之在回调里重挂）
+  const dmaNormal = planUartIoc(iocRoot, {
+    uart: 'huart1',
+    baud: 921600,
+    rxMode: 'dma',
+    dmaMode: 'normal',
+    builtinIrq: true,
+    irqPriority: 5
+  })
+  check(
+    'ioc: 选单次模式就写 DMA_NORMAL（参数说了算，不能写死）',
+    /Dma\.USART1_RX\.1\.Mode=DMA_NORMAL/.test(dmaNormal.after ?? ''),
+    (dmaNormal.after ?? '').match(/Dma\.USART1_RX\.1\.Mode=.*/)?.[0]
+  )
+
+  const already = planUartIoc(iocRoot, {
+    uart: 'huart3',
+    baud: 115200,
+    rxMode: 'dma',
+    dmaMode: 'circular',
+    builtinIrq: true,
+    irqPriority: 5
+  })
+  check(
+    'ioc: 串口本来就有 RX DMA 时不重复添加，但会把模式补上（原来这格是「点了没反应」）',
+    !(already.after ?? '').includes('Dma.Request1=') &&
+      /Dma\.USART3_RX\.0\.Mode=DMA_CIRCULAR/.test(already.after ?? ''),
+    (already.notes ?? []).join(' | ')
+  )
+
+  // 已经就是循环：一个字节都不该改（否则每次安装都白跑两分钟 CubeMX）
+  const circRoot = join(sandbox, 'ioc-circ')
+  mkdirSync(circRoot, { recursive: true })
+  writeFileSync(
+    join(circRoot, 'circ.ioc'),
+    [
+      'Mcu.Family=STM32F4',
+      'USART3.IPParameters=VirtualMode,BaudRate',
+      'USART3.BaudRate=115200',
+      'USART3.VirtualMode=VM_ASYNC',
+      'Dma.Request0=USART3_RX',
+      'Dma.USART3_RX.0.Instance=DMA1_Stream1',
+      'Dma.USART3_RX.0.Mode=DMA_CIRCULAR',
+      'Dma.RequestsNb=1',
+      ''
+    ].join('\n'),
+    'utf8'
+  )
+  const circSame = planUartIoc(circRoot, {
+    uart: 'huart3',
+    baud: 115200,
+    rxMode: 'dma',
+    dmaMode: 'circular',
+    builtinIrq: true,
+    irqPriority: 5
+  })
+  check(
+    'ioc: 已经是循环模式时不做任何改动（幂等，避免无意义地重跑 CubeMX）',
+    circSame.ok && circSame.changes.length === 0 && circSame.after === circSame.before,
+    circSame.changes.map((c) => c.key).join(',')
+  )
+
+  // 反过来的场景：工程里是单次，参数要循环 —— 这就是用户问的那个「能不能改」
+  writeFileSync(
+    join(circRoot, 'circ.ioc'),
+    [
+      'Mcu.Family=STM32F4',
+      'USART3.IPParameters=VirtualMode,BaudRate',
+      'USART3.BaudRate=115200',
+      'USART3.VirtualMode=VM_ASYNC',
+      'Dma.Request0=USART3_RX',
+      'Dma.USART3_RX.0.Instance=DMA1_Stream1',
+      'Dma.USART3_RX.0.Mode=DMA_NORMAL',
+      'Dma.RequestsNb=1',
+      ''
+    ].join('\n'),
+    'utf8'
+  )
+  const flip = planUartIoc(circRoot, {
+    uart: 'huart3',
+    baud: 115200,
+    rxMode: 'dma',
+    dmaMode: 'circular',
+    builtinIrq: true,
+    irqPriority: 5
+  })
+  check(
+    'ioc: 工程里是 NORMAL、参数要 CIRCULAR 时只改 Mode（另加一行关弹窗的 AskForMigrate）',
+    flip.changes.length === 2 &&
+      flip.changes.some((c) => c.key === 'Dma.USART3_RX.0.Mode' && c.after === 'DMA_CIRCULAR') &&
+      flip.changes.some((c) => c.key === 'ProjectManager.AskForMigrate') &&
+      /Dma\.USART3_RX\.0\.Instance=DMA1_Stream1/.test(flip.after ?? ''),
+    flip.changes.map((c) => `${c.key}=${c.after}`).join(',')
+  )
+  check(
+    'ioc: 改模式时会说清「从哪改到哪」，不是闷头改',
+    (flip.notes ?? []).some((n) => n.includes('单次') && n.includes('循环')),
+    (flip.notes ?? []).join(' | ')
+  )
+  check(
+    'ioc: 能读出 .ioc 里 RX DMA 的真实模式（源码里 NORMAL/CIRCULAR 看不出区别）',
+    readRxDmaMode(circRoot, 'USART3') === 'normal' && readRxDmaMode(iocRoot, 'USART3') === null,
+    `${readRxDmaMode(circRoot, 'USART3')} / ${readRxDmaMode(iocRoot, 'USART3')}`
+  )
+
+  // ---- 不知道 DMA 映射的芯片：宁可明说，也不猜一个 Stream ----
+  const h7Root = join(sandbox, 'ioc-h7')
+  mkdirSync(h7Root, { recursive: true })
+  writeFileSync(
+    join(h7Root, 'h7.ioc'),
+    'Mcu.Family=STM32H7\nUSART1.IPParameters=VirtualMode\nUSART1.VirtualMode=VM_ASYNC\n',
+    'utf8'
+  )
+  const h7 = planUartIoc(h7Root, {
+    uart: 'huart1',
+    baud: 115200,
+    rxMode: 'dma',
+    dmaMode: 'circular',
+    builtinIrq: true,
+    irqPriority: 5
+  })
+  check(
+    'ioc: 没见过的芯片家族不加 DMA，只给警告（猜错 Stream 会静默不工作）',
+    h7.ok && !(h7.after ?? '').includes('USART1_RX') && h7.warnings.length > 0,
+    h7.warnings.join(' | ')
+  )
+
+  // ---- 事后核对：代码里的波特率到底变没变 ----
+  check(
+    'ioc: 没重新生成时，核对会指出代码里还是旧波特率',
+    !checkBaudInCode(iocRoot, 'huart1', 921600).match &&
+      checkBaudInCode(iocRoot, 'huart1', 921600).actual === 115200,
+    checkBaudInCode(iocRoot, 'huart1', 921600).detail
+  )
+  check('ioc: 一致时核对通过', checkBaudInCode(iocRoot, 'huart1', 115200).match)
+
+  // ---- 包声明：参数名对不上就整段静默失效，所以逐个对一遍 ----
+  const vofaForIoc = loadPack('vofa')
+  const setup = vofaForIoc?.iocSetup
+  const paramKeys = new Set((vofaForIoc?.params ?? []).map((x) => x.key))
+  const refs = setup
+    ? [
+        setup.uartParam,
+        setup.baudParam,
+        setup.rxModeParam,
+        setup.dmaModeParam,
+        setup.builtinIrqParam,
+        setup.irqPriorityParam,
+        setup.cubeMxParam
+      ]
+    : []
+  check(
+    '包声明: vofa 声明了 iocSetup，且每个参数名都真的存在',
+    Boolean(setup) && refs.every((r) => !r || paramKeys.has(r)),
+    refs.filter((r) => r && !paramKeys.has(r)).join(',')
+  )
+  check(
+    '包声明: 有波特率参数（这次的核心诉求）',
+    paramKeys.has('baud') && paramKeys.has('cubeMxRun'),
+    [...paramKeys].join(',')
+  )
+
+  // ---- DMA 模式：.ioc 和 vofa_config.h 必须说同一句话 ----
+  const dmaParam = (vofaForIoc?.params ?? []).find((p) => p.key === 'dmaMode')
+  check(
+    '包声明: dmaMode 有中文标签，且没选 DMA 时置灰而不是隐藏',
+    dmaParam?.options?.join(',') === 'circular,normal' &&
+      Boolean(dmaParam?.optionLabels?.circular) &&
+      dmaParam?.enableIf?.key === 'rxMode' &&
+      dmaParam?.enableIf?.equals === 'dma' &&
+      // 留一行灰的才找得到；用 showIf 会让用户以为这功能不存在
+      !dmaParam?.showIf,
+    JSON.stringify(dmaParam?.optionLabels ?? null)
+  )
+
+  if (vofaForIoc) {
+    const tplOf = (kind: 'config' | 'bind'): string =>
+      vofaForIoc.generated.find((g) => g.render === kind)!.template
+    const cfgFacts = inspectProject(iocRoot)
+    const circCfg = renderConfig(vofaForIoc, tplOf('config'), { ...symMap.params, rxMode: 'dma', dmaMode: 'circular' }, cfgFacts)
+    const normCfg = renderConfig(vofaForIoc, tplOf('config'), { ...symMap.params, rxMode: 'dma', dmaMode: 'normal' }, cfgFacts)
+    check(
+      'DMA 模式: 循环写 1、单次写 0（固件靠这个宏决定要不要在回调里重挂）',
+      /#define VOFA_RX_DMA_CIRCULAR\s+1/.test(circCfg) &&
+        /#define VOFA_RX_DMA_CIRCULAR\s+0/.test(normCfg),
+      [/#define VOFA_RX_DMA_CIRCULAR\s+\d/.exec(circCfg)?.[0], /#define VOFA_RX_DMA_CIRCULAR\s+\d/.exec(normCfg)?.[0]].join(' / ')
+    )
+  }
 }
 
 section('结果')

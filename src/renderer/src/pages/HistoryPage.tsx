@@ -47,6 +47,7 @@ export default function HistoryPage(): React.JSX.Element {
   const openPreview = useStudio((s) => s.openPreview)
   const restoreSnapshot = useStudio((s) => s.restoreSnapshot)
   const openTemplateInEditor = useStudio((s) => s.openTemplateInEditor)
+  const writeNow = useStudio((s) => s.writeNow)
   const projectRoot = useStudio((s) => s.projectRoot)
   const setPage = useStudio((s) => s.setPage)
   const busy = useStudio((s) => s.busy)
@@ -103,6 +104,12 @@ export default function HistoryPage(): React.JSX.Element {
           break
         case 'restore-snapshot':
           if (action.snapshotId) await restoreSnapshot(action.snapshotId)
+          break
+        case 'retry-write':
+          // 按这条记录当时的工程与参数再写一遍。
+          // 落到这里之前已经 loadProject 过（bundle 重新生成），
+          // 所以写的就是这次失败的那套配置。
+          await writeNow(true)
           break
         default:
           break
@@ -211,7 +218,14 @@ export default function HistoryPage(): React.JSX.Element {
                         </>
                       )}
                     </div>
-                    <div className="faint small">{h.detail}</div>
+                    {/* detail 可能是多行的失败清单（每行一个文件 + 错误码），
+                        这里必须保留换行，否则 8 个失败会挤成一坨看不清 */}
+                    <div
+                      className="faint small"
+                      style={{ whiteSpace: 'pre-line', lineHeight: 1.6, maxWidth: 520 }}
+                    >
+                      {h.detail}
+                    </div>
                     {h.projectRoot && (
                       <div className="small" style={{ marginTop: 2 }}>
                         <PathText value={h.projectRoot} />

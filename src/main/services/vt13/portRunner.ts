@@ -25,11 +25,11 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PackIocChanges, PackManifest } from '../../../shared/packTypes'
-import { IocEditor } from './iocEditor'
+import { IocEditor } from '../ioc/edit'
 import { commentOutUsartHandler, isHandlerCommentedOut, hasHandler, countDefinition } from './itHandler'
 import { transformRcCode, detectEol } from './codeTransform'
 import { USART1_RX_STREAMS, VT13_NVIC_USART1, VT13_BAUD, usart1RxDmaFields } from './iocSpec'
-import { findCubeMx, runCubeMxAndVerify, ensureNoMigratePrompt } from './cubeMx'
+import { findCubeMx, runCubeMxAndVerify, ensureNoMigratePrompt } from '../cubeMx/index'
 
 // --------------------------------------------------------------------------
 // 预检

@@ -4,19 +4,7 @@
 
 import React from 'react'
 import { useStudio } from '../state/store'
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Checkbox,
-  EmptyState,
-  Field,
-  PageBody,
-  PageHeader,
-  Select,
-  TextInput
-} from '../components/ui'
+import { Alert, Badge, Button, Card, Checkbox, Field, PageBody, PageHeader, Select, TextInput } from '../components/ui'
 import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
 

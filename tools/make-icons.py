@@ -10,10 +10,14 @@
                           手工组装的多尺寸 ICO，16/24/32/48/64/128/256 每个尺寸
                           **独立渲染** —— 比让 Pillow 从大图统一缩放清晰得多。
     icon.png              512x512，给仓库 / 社交预览用。
-    installerSidebar.bmp  164x314，NSIS 欢迎页与完成页左边的竖图。
-    installerHeader.bmp   150x57，NSIS 内页右上角的小图。
+    installerSidebar.bmp  164x314，NSIS 欢迎页与完成页左边的竖图。（旧 NSIS 用，留着）
+    installerHeader.bmp   150x57，NSIS 内页右上角的小图。（同上）
 
-设计：**蓝色斜向渐变圆角方块 + 白色几何 C**。
+设计：**蓝紫渐变的几何 C，背景透明**。
+
+2.0.2 之前是「渐变圆角方块 + 白色 C」——方块一去掉，同一个 C 在任务栏里
+看着会小一圈（原来方块撑满画布，C 只占 60%）。所以这里把 C 等比放大到
+占画布 84%，笔画与外径的比例保持不变，观感才和旧图标是同一个字。
 
 C 是手画的**等宽环段**（外扇形挖掉内圆），两端是沿半径方向的平切口 ——
 不用字体，所以换台机器、换个系统字体都不会变形。它同时是
@@ -24,9 +28,12 @@ C 是手画的**等宽环段**（外扇形挖掉内圆），两端是沿半径�
 
 改了参数后重新打包才会生效：
 
-    npm run dist:installer
+    python tools/make-icons.py
+    npm run dist:setup
 
 依赖 Pillow：  pip install Pillow
+（本机的工作目录是低完整性标签的，pip 装不进项目环境时，可以用
+ PYTHONPATH 指向已有的 site-packages 再跑本脚本。）
 """
 
 from __future__ import annotations
@@ -51,13 +58,13 @@ PURPLE = (124, 92, 255)  # #7c5cff 渐变终点（右下）
 WHITE = (255, 255, 255)
 SUBTLE = (209, 220, 254)  # 侧边栏版本号那种淡蓝
 
-SS = 4  # 超采样倍数，抗锯齿全靠它
+SS = 8  # 超采样倍数，抗锯齿全靠它（小尺寸下会临时调高，见 ss_for）
 
 ROUND_RADIUS = 0.22  # 圆角方块的圆角比例，跟着 Windows 11 的图标观感走
 
 # C 的几何（都相对画布边长，所以任意尺寸共用一套参数）
-C_R_OUTER = 0.300  # 外半径
-C_STROKE = 0.185  # 笔画粗细（内半径 = 外半径 - 粗细）
+C_R_OUTER = 0.420  # 外半径
+C_STROKE = 0.220  # 笔画粗细（内半径 = 外半径 - 粗细 = 0.20）
 C_GAP_DEG = 42  # 两侧各让开的度数，所以开口总宽 = 2 * 42 = 84 度
 
 APP_NAME_LINES = ("CMake / VSCode", "工程配置器")
@@ -70,15 +77,35 @@ VERSION = "v1.0.0"
 
 
 def diagonal_gradient(size: int, c1: tuple, c2: tuple) -> Image.Image:
-    """135 度渐变（左上 → 右下），和 CSS 的 linear-gradient(135deg, ...) 一致。"""
-    img = Image.new("RGB", (size, size))
-    draw = ImageDraw.Draw(img)
+    """
+    135 度渐变（左上 → 右下），和 CSS 的 linear-gradient(135deg, ...) 一致。
+
+    渐变值只跟 (x + y) 有关，所以整张图其实是同一根长度为 2n-1 的一维色带
+    按行错位切出来的。先算一次色带，再逐行裁贴 —— 比逐像素算 4096² 次
+    快两个数量级（8 倍超采样下逐像素要跑十几秒）。
+    """
     span = 2 * (size - 1)
+    ramp = Image.new("RGB", (2 * size - 1, 1))
+    px = ramp.load()
+    for i in range(2 * size - 1):
+        t = i / span if span else 0.0
+        px[i, 0] = tuple(int(c1[k] + (c2[k] - c1[k]) * t) for k in range(3))
+
+    img = Image.new("RGB", (size, size))
     for y in range(size):
-        for x in range(size):
-            t = (x + y) / span
-            draw.point((x, y), tuple(int(c1[i] + (c2[i] - c1[i]) * t) for i in range(3)))
+        img.paste(ramp.crop((y, 0, y + size, 1)), (0, y))
     return img
+
+
+def ss_for(size: int) -> int:
+    """
+    小尺寸要用更高的超采样倍数。
+
+    16px 的图标，笔画只有 4 个像素宽 —— 4 倍超采样下每次缩小都是 1/4，
+    边缘的过渡像素会吃掉一半笔画，看上去糊成一团。8 倍之后过渡只占
+    1/8，镂空和笔画都还分得开。
+    """
+    return SS if size <= 128 else 4
 
 
 def rounded_rect_mask(size: int, radius_ratio: float = ROUND_RADIUS) -> Image.Image:
@@ -116,20 +143,27 @@ def _color_layer(size: int, color: tuple) -> Image.Image:
 
 
 def render_icon(size: int) -> Image.Image:
-    """完整图标：渐变圆角方块 + 白色几何 C。"""
-    big = size * SS
+    """
+    完整图标：渐变填充的几何 C，其余部分全透明。
+
+    透明底是为了让它在任何背景上都成立 —— 白色窗口、深色任务栏、
+    浅色桌面壁纸、浏览器的深色主题，都不用为它专门配底色。
+    代价是不能再用「方块」撑画布，所以 C 本身放大（见文件头的说明）。
+    """
+    big = size * ss_for(size)
     tile = diagonal_gradient(big, BRIGHT, PURPLE).convert("RGBA")
-    tile.putalpha(rounded_rect_mask(big))
-    out = Image.composite(_color_layer(big, WHITE), tile, c_mask(big))
-    return out.resize((size, size), Image.LANCZOS)
+    out = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    # 用 BOX（整格面积平均）而不是 LANCZOS：超采样倍数正好是整数倍，
+    # BOX 等于精确求平均，边缘不会有 LANCZOS 那种过冲的光晕。
+    return Image.composite(tile, out, c_mask(big)).resize((size, size), Image.BOX)
 
 
 def render_bare_c(size: int) -> Image.Image:
     """只有白色的 C，没有背景方块 —— 贴在本来就有渐变底的侧边栏上，避免方块套方块。"""
-    big = size * SS
+    big = size * ss_for(size)
     out = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     out = Image.composite(_color_layer(big, WHITE), out, c_mask(big))
-    return out.resize((size, size), Image.LANCZOS)
+    return out.resize((size, size), Image.BOX)
 
 
 # --------------------------------------------------------------------------

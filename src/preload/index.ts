@@ -43,8 +43,11 @@ import {
   type WriteResult
 } from '@shared/types'
 import type { PackPreset } from '@shared/templateFormat'
+import type { ElfVarsResult, AddrSlot } from '@shared/addrTable'
+import type { VofaMap } from '@shared/vofaMap'
 import type {
   PackApplyResult,
+  PackApplyStep,
   PackManifest,
   PackPlan,
   PackPortPreflightResult,
@@ -117,6 +120,25 @@ const api: StudioApi = {
     ipcRenderer.invoke(IPC.packPlan, options) as Promise<PackPlan>,
   packApply: (options: PackPlanOptions) =>
     ipcRenderer.invoke(IPC.packApply, options) as Promise<PackApplyResult>,
+  vofaMapSave: (projectRoot: string, map: VofaMap) =>
+    ipcRenderer.invoke(IPC.vofaMapSave, projectRoot, map) as Promise<{
+      ok: boolean
+      path: string | null
+      error?: string
+    }>,
+  vofaElfVars: (projectRoot: string, elfPath?: string) =>
+    ipcRenderer.invoke(IPC.vofaElfVars, projectRoot, elfPath) as Promise<ElfVarsResult>,
+  vofaAddrLoad: (projectRoot: string) =>
+    ipcRenderer.invoke(IPC.vofaAddrLoad, projectRoot) as Promise<{
+      slots: AddrSlot[]
+      path: string | null
+    }>,
+  vofaAddrSave: (projectRoot: string, slots: AddrSlot[]) =>
+    ipcRenderer.invoke(IPC.vofaAddrSave, projectRoot, slots) as Promise<{
+      ok: boolean
+      path: string | null
+      error?: string
+    }>,
   packPortPreflight: (packId: string, projectRoot: string) =>
     ipcRenderer.invoke(IPC.packPortPreflight, packId, projectRoot) as Promise<PackPortPreflightResult>,
   packPortInstall: (options: { packId: string; projectRoot: string; skipCubeMx?: boolean }) =>
@@ -130,6 +152,9 @@ const api: StudioApi = {
    */
   onPortProgress: (handler) =>
     subscribe<{ runId: string; step: PackPortStep }>(IPC.packPortProgress, handler),
+  /** 常规包写入的进度（写文件 → CubeMX → 核对波特率） */
+  onApplyProgress: (handler) =>
+    subscribe<{ runId: string; step: PackApplyStep }>(IPC.packApplyProgress, handler),
 
   checkUpdate: (force?: boolean) =>
     ipcRenderer.invoke(IPC.checkUpdate, force) as Promise<import('@shared/updateTypes').UpdateInfo>,
@@ -142,10 +167,7 @@ const api: StudioApi = {
       cancelled?: boolean
     }>,
   onUpdateDownloadProgress: (handler) =>
-    subscribe<import('@shared/updateTypes').DownloadProgress>(
-      IPC.updateDownloadProgress,
-      handler
-    ),
+    subscribe<import('@shared/updateTypes').DownloadProgress>(IPC.updateDownloadProgress, handler),
   cancelUpdateDownload: () => ipcRenderer.invoke(IPC.cancelUpdateDownload) as Promise<void>,
   runUpdateInstaller: (path: string) =>
     ipcRenderer.invoke(IPC.runUpdateInstaller, path) as Promise<{ ok: boolean; error?: string }>,
@@ -201,12 +223,9 @@ const api: StudioApi = {
       presets: PackPreset[]
     } | null>,
 
-  listPackPresets: (packId) =>
-    ipcRenderer.invoke(IPC.packPresetList, packId) as Promise<PackPreset[]>,
-  savePackPreset: (preset) =>
-    ipcRenderer.invoke(IPC.packPresetSave, preset) as Promise<PackPreset[]>,
-  deletePackPreset: (id) =>
-    ipcRenderer.invoke(IPC.packPresetDelete, id) as Promise<PackPreset[]>,
+  listPackPresets: (packId) => ipcRenderer.invoke(IPC.packPresetList, packId) as Promise<PackPreset[]>,
+  savePackPreset: (preset) => ipcRenderer.invoke(IPC.packPresetSave, preset) as Promise<PackPreset[]>,
+  deletePackPreset: (id) => ipcRenderer.invoke(IPC.packPresetDelete, id) as Promise<PackPreset[]>,
   getTemplateFormatDoc: () => ipcRenderer.invoke(IPC.templateFormatDoc) as Promise<string>,
   listHistory: () => ipcRenderer.invoke(IPC.historyList) as Promise<HistoryEntry[]>,
   addHistory: (entry) => ipcRenderer.invoke(IPC.historyAdd, entry) as Promise<HistoryEntry[]>,

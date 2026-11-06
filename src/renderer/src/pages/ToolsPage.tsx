@@ -12,27 +12,10 @@
 
 import React from 'react'
 import { useStudio } from '../state/store'
-import {
-  Alert,
-  Badge,
-  Button,
-  Card,
-  Checkbox,
-  DataTable,
-  EmptyState,
-  Field,
-  Modal,
-  PageBody,
-  PageHeader,
-  PathText,
-  Select,
-  Spinner,
-  TextInput
-} from '../components/ui'
+import { Alert, Badge, Button, Card, Checkbox, DataTable, EmptyState, Field, Modal, PageBody, PageHeader, PathText, Spinner, TextInput } from '../components/ui'
 import { NoProject } from '../components/NoProject'
 import { Icons } from '../components/icons'
 // 探针 / target / SVD 相关的导入已随「调试探针与目标」卡片迁到 ProbeSettingsPage
-import { guessChipFamily } from '@shared/chipTargets'
 import type { GenOptions } from '@shared/types'
 
 /**
@@ -436,7 +419,6 @@ export default function ToolsPage(): React.JSX.Element {
       <NoProject reason={text} />
     </Card>
   )
-
 
   const genCard = options ? (
     <Card

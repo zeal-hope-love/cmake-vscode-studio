@@ -136,18 +136,21 @@ export const Icons = {
 }
 
 /**
- * 品牌标记 —— 和 resources/icon.ico 是同一个形状：蓝色斜向渐变圆角方块 + 白色几何 C。
+ * 品牌标记 —— 和 resources/icon.ico 是同一个形状：蓝紫斜向渐变的几何 C，背景透明。
  *
  * C 是一条**等宽环段**（外圆减内圆，两端沿半径平切），不是字体 ——
  * 所以换台机器、换个系统字体都不会变形，和 tools/make-icons.py 画出来的完全一致。
  * 下面这些比例常数必须和那个脚本里的 C_R_OUTER / C_STROKE / C_GAP_DEG 对得上。
+ *
+ * 2.0.2 起去掉了外面那个圆角方块：图标改成透明底之后，这里再画方块就和
+ * 任务栏里的图标不是一个东西了。
  */
 export function LogoMark({ size = 18 }: { size?: number }): React.JSX.Element {
   // 都在 24x24 的 viewBox 里算
   const S = 24
   const c = S / 2
-  const rOut = S * 0.3
-  const rIn = rOut - S * 0.185
+  const rOut = S * 0.42
+  const rIn = rOut - S * 0.22
   const gap = 42
   const a0 = (gap * Math.PI) / 180
   const a1 = ((360 - gap) * Math.PI) / 180
@@ -172,8 +175,7 @@ export function LogoMark({ size = 18 }: { size?: number }): React.JSX.Element {
           <stop offset="1" stopColor="#7c5cff" />
         </linearGradient>
       </defs>
-      <rect width={S} height={S} rx={S * 0.22} fill="url(#cvs-logo-grad)" />
-      <path d={d} fill="#ffffff" />
+      <path d={d} fill="url(#cvs-logo-grad)" />
     </svg>
   )
 }

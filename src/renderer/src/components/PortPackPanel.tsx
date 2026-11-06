@@ -23,8 +23,8 @@ import {
   Select,
   Spinner,
   TextInput
-} from '../components/ui'
-import { Icons } from '../components/icons'
+} from './ui'
+import { Icons } from './icons'
 import { useStudio } from '../state/store'
 import type {
   PackManifest,

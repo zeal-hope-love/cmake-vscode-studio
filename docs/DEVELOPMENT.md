@@ -238,7 +238,7 @@ pwsh -File tools/take-shots.ps1     # 输出到 .dsh_shots/
 | 界面起不来、`require('electron')` 是 undefined | 环境里有 `ELECTRON_RUN_AS_NODE=1` | 清掉它（`启动配置器.bat` 已代劳） |
 | 断点打在 `.ts` 上不生效 | 没生成 sourcemap | 用 `npm run dev:inspect`（带了 `--sourcemap`） |
 | 打包后白屏 | 渲染层路径或 asar 问题 | 用第 4 节的截图钩子确认；本项目的 `loadFile` 路径在 `src/main/index.ts` |
-| IPC 调不通 | 通道名拼错 | 通道名全部集中在 `src/shared/types.ts` 的 `IPC` 常量里，两边都引用它 |
+| IPC 调不通 | 通道名拼错 | 通道名全部集中在 `src/shared/types/ipc.ts` 的 `IPC` 常量里，两边都引用它 |
 | 改了主进程没反应 | 进程没重启 | electron-vite 会重启；如果卡住，手动关掉 `electron.exe` |
 
 ### 7. IPC 的调试思路
@@ -250,7 +250,11 @@ await window.api.detectTools({ probeVersions: true })
 await window.api.loadProject('C:\\Users\\someone\\Desktop\\STM32\\SBV')
 ```
 
-要加新通道，改四处：`src/shared/types.ts`（通道常量 + `StudioApi` 接口）→ `src/main/ipc.ts`（处理器）→ `src/preload/index.ts`（暴露）→ 页面里调用。
+要加新通道，改三处：`src/shared/types/ipc.ts`（通道常量 + `StudioApi` 接口）→
+`src/main/ipc/<域>.ts`（处理器，新域才需要在 `ipc/index.ts` 多一行装配）→
+`src/preload/index.ts`（暴露）→ 页面里调用。
+
+**最容易漏的是 preload 那一步** —— 漏了不会报编译错，只会在运行时说「不是函数」。
 
 ### 8. 打包时会踩的坑（实测踩过）
 

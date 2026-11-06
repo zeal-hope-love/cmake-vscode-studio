@@ -1,21 +1,35 @@
 {
   "id": "vofa",
   "name": "VOFA+ 在线调参",
-  "summary": "把注册的变量周期发到 VOFA+ 画波形，并支持 set/get/list 在线改参数。不用回 CubeMX、不用重烧。",
-  "version": "1.2.0",
+  "summary": "把注册的变量周期发到 VOFA+ 画波形，并支持 set/get/list 在线改参数。也可以完全不改源码：工具从 .elf 取地址，直接按地址读内存（含 static 变量）。",
+  "version": "1.4.1",
   "icon": "waveform",
   "params": [
     {
       "key": "uart",
       "label": "用哪个串口",
       "type": "enum",
+      "optionsFrom": "uarts",
       "default": "huart1",
       "hint": "要挑一个没被占用的。DBUS 遥控通常在 huart3、裁判系统在 huart6。"
+    },
+    {
+      "key": "baud",
+      "label": "波特率",
+      "type": "number",
+      "min": 1200,
+      "max": 9216000,
+      "step": 1,
+      "default": 115200,
+      "hint": "会写进 .ioc 并让 CubeMX 重新生成 Src/usart.c。上位机（VOFA+）那边要填一样的值，否则收发全是乱码。"
     },
     {
       "key": "sendHz",
       "label": "波形发送频率 (Hz)",
       "type": "number",
+      "min": 1,
+      "max": 500,
+      "step": 1,
       "default": 50,
       "hint": "通道数 N 时约 (N*4+4)*Hz 字节/秒。走蓝牙透传（几 KB/s）别设太高。"
     },
@@ -28,14 +42,71 @@
         "it",
         "dma"
       ],
-      "hint": "it = 逐字节中断，只要串口中断使能即可；dma = DMA Circular，需要 CubeMX 里配 RX DMA。"
+      "hint": "it = 逐字节中断（只要串口中断使能）；dma = DMA + 空闲中断。选 dma 时工具会把 RX DMA 写进 .ioc（Stream/Channel 按芯片型号查表），再跑一遍 CubeMX。"
+    },
+    {
+      "key": "dmaMode",
+      "label": "RX DMA 模式",
+      "type": "enum",
+      "default": "circular",
+      "options": [
+        "circular",
+        "normal"
+      ],
+      "optionLabels": {
+        "circular": "循环 CIRCULAR（推荐）",
+        "normal": "单次 NORMAL"
+      },
+      "enableIf": {
+        "key": "rxMode",
+        "equals": "dma"
+      },
+      "hint": "循环 = DMA 一直跑，中断里按偏移取新字节，命令之间没有空窗；单次 = 收满一块就停，固件在回调里重挂（高波特率时重挂瞬间可能丢字节）。会写进 .ioc 的 Dma.<串口>_RX.<槽>.Mode，并让 vofa_config.h 的 VOFA_RX_DMA_CIRCULAR 跟着变。"
     },
     {
       "key": "builtinIrq",
       "label": "由模块自己使能串口中断",
       "type": "bool",
       "default": true,
-      "hint": "CubeMX 里没勾这个串口的全局中断时打开。它会在运行时开 NVIC 并自带中断入口。"
+      "hint": "打开 = 模块运行时自己开 NVIC 并自带中断入口，.ioc 的 NVIC 不动；关掉 = 由 CubeMX 生成中断入口（工具会把 NVIC 写进 .ioc）。两边都开会导致中断函数重复定义。"
+    },
+    {
+      "key": "irqPriority",
+      "label": "串口中断优先级",
+      "type": "number",
+      "min": 0,
+      "max": 15,
+      "step": 1,
+      "default": 5,
+      "hint": "NVIC 优先级数值。要和工程里其他中断的相对关系对得上。"
+    },
+    {
+      "key": "cubeMxRun",
+      "label": "写完后让 CubeMX 重新生成",
+      "type": "bool",
+      "default": true,
+      "hint": "关掉的话只改 .ioc，Src/ 里的代码还是旧的 —— 波特率要等你自己在 CubeMX 里生成一次才生效。"
+    },
+    {
+      "key": "txFn",
+      "label": "TX 发送函数",
+      "type": "text",
+      "default": "usart1_tx_dma_enable",
+      "hint": "工程里现成的「一次性 DMA 发送」函数名。名字不同就在这里改。"
+    },
+    {
+      "key": "txHeader",
+      "label": "TX 函数所在头文件",
+      "type": "text",
+      "default": "",
+      "hint": "留空则自动探测；探测不到时填，例如 bsp_usart.h。"
+    },
+    {
+      "key": "txDma",
+      "label": "TX DMA 句柄",
+      "type": "text",
+      "default": "hdma_usart1_tx",
+      "hint": "用来判断上一帧是否发完。串口换了这里也要跟着换。"
     }
   ],
   "files": [
@@ -55,11 +126,13 @@
   "generated": [
     {
       "template": "vofa_config.h.tpl",
-      "to": "application/vofa/vofa_config.h"
+      "to": "application/vofa/vofa_config.h",
+      "render": "config"
     },
     {
       "template": "vofa_bind.c.tpl",
-      "to": "application/vofa/vofa_bind.c"
+      "to": "application/vofa/vofa_bind.c",
+      "render": "bind"
     }
   ],
   "requires": {
@@ -103,9 +176,12 @@
     }
   ],
   "manualSteps": [
-    "VOFA+ 里打开对应 COM 口，协议选 **JustFloat**，波特率与工程一致",
-    "如果走蓝牙透传：两个模块先 AT+BAUD7 改成 115200、AT+BLUFISEND=1 开透传，再 AT+BIND 绑定（出厂默认 9600）",
-    "命令：`list` 列出所有可调参数；`get 名字` 读一个；`set 名字 值` 改一个（立即生效，断电不保存）",
+    "VOFA+ 里打开对应 COM 口，协议选 **JustFloat**，波特率填上面那个值（和固件一致）",
+    "如果走蓝牙透传：两个模块先 AT+BAUD7 改成与固件相同的波特率、AT+BLUFISEND=1 开透传，再 AT+BIND 绑定（出厂默认 9600）",
+    "注册表命令：`list` 列出可调参数；`get 名字` 读；`set 名字 值` 改（立即生效，断电不保存）",
+    "地址表命令（工具「地址表」面板生成，整行发送）：`ac` 清空；`am <槽号> <地址> <f|i16|u32…>` 配一路；`al` 看已配的槽",
+    "读写单个地址：`rd <地址> <类型>` 读、`wr <地址> <类型> <值>` 写",
+    "多条命令可以用 `;` 连成一行一次发完",
     "调好之后把值写回源码里的宏固化 —— 在线改的值不落盘"
   ],
   "features": [
@@ -123,5 +199,14 @@
         "builtinIrq": true
       }
     }
-  ]
+  ],
+  "iocSetup": {
+    "uartParam": "uart",
+    "baudParam": "baud",
+    "rxModeParam": "rxMode",
+    "dmaModeParam": "dmaMode",
+    "builtinIrqParam": "builtinIrq",
+    "irqPriorityParam": "irqPriority",
+    "cubeMxParam": "cubeMxRun"
+  }
 }
