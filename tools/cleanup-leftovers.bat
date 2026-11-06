@@ -66,6 +66,9 @@ if "%FAILED%"=="1" (
     echo   0-byte files, so they waste no disk space.
     echo   Close WorkBuddy / your IDE / the Explorer preview pane and run this
     echo   again, or run it right after a reboot before opening those programs.
+    echo   If it still fails, the antivirus is probably memory-mapping the js
+    echo   files inside: add this project folder to its trust list, or exit it,
+    echo   then run this script again.
 ) else (
     echo   All cleaned.
 )
