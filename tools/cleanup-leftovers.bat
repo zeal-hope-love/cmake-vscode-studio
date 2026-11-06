@@ -27,7 +27,7 @@ set "DRY=0"
 if /I "%~1"=="--dry" set "DRY=1"
 
 rem  Targets are relative to the project root (this file lives in tools\).
-set "TARGETS=release-203 release-204 release-portable release\win-unpacked release\win-unpacked.tmp .tmp\stage-r4 .tmp\stmp"
+set "TARGETS=release-portable release\win-unpacked release\win-unpacked.tmp .installer-build .installer-build2 .installer-build3 .installer-build4 .tmp\build .tmp\stage-r4"
 
 cd /d "%~dp0.."
 
