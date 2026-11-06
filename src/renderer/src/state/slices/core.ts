@@ -16,11 +16,26 @@ let logSeq = 1
 export function coreSlice(
   set: StudioSet,
   get: StudioGet
-): Pick<StudioState, 'bootstrap' | 'setPage' | 'setTheme' | 'saveSettings' | 'notify' | 'dismissToast' | 'setError' | 'appendLog' | 'clearLog'> {
+): Pick<
+  StudioState,
+  | 'bootstrap'
+  | 'setPage'
+  | 'focusUpdate'
+  | 'setTheme'
+  | 'saveSettings'
+  | 'notify'
+  | 'dismissToast'
+  | 'setError'
+  | 'appendLog'
+  | 'clearLog'
+> {
   return {
     bootstrap: async () => {
       try {
-        const [settings, appInfo] = await Promise.all([window.api.getSettings(), window.api.getAppInfo()])
+        const [settings, appInfo] = await Promise.all([
+          window.api.getSettings(),
+          window.api.getAppInfo()
+        ])
         set({ settings, appInfo, ready: true })
         applyThemeToDom(settings.theme)
         // 只影响标题栏配色，写盘失败也不该阻断启动 —— 吞掉错误，
@@ -58,6 +73,17 @@ export function coreSlice(
 
     setPage: (page) => set({ activePage: page }),
 
+    /*
+     * 顶部「有新版本」横幅的「查看更新」走这里。
+     *
+     * 以前是直接 shell.openExternal 打开 GitHub 发布页 —— 用户被扔到浏览器里，
+     * 还得自己分辨哪个是安装包、下完再回来手动运行。现在统一落到「关于与版本」页，
+     * 那一页本来就有带真实进度的应用内下载（下完直接启动安装器）。
+     *
+     * 序号自增是为了让 AboutPage 的副作用每次都触发：连点两次也能重新滚回去。
+     */
+    focusUpdate: () => set((s) => ({ activePage: 'about', updateFocusSeq: s.updateFocusSeq + 1 })),
+
     setTheme: async (theme) => {
       // 先把界面换掉 —— 这一步不依赖磁盘，永远会成功。
       // 万一后面写盘失败，用户至少看到主题已经变了，而不是「点了没反应还报错」。
@@ -68,7 +94,10 @@ export function coreSlice(
         // 主进程负责标题栏覆盖层与窗口背景色（「跟随系统」由它去问操作系统）
         await window.api.setWindowTheme(theme)
       } catch (err) {
-        get().notify('err', `主题已切换，但没能保存到设置文件：${err instanceof Error ? err.message : String(err)}`)
+        get().notify(
+          'err',
+          `主题已切换，但没能保存到设置文件：${err instanceof Error ? err.message : String(err)}`
+        )
       }
     },
 
@@ -77,10 +106,7 @@ export function coreSlice(
         const settings = await window.api.saveSettings(patch)
         set({ settings })
       } catch (err) {
-        get().notify(
-          'err',
-          `设置没保存成功：${err instanceof Error ? err.message : String(err)}`
-        )
+        get().notify('err', `设置没保存成功：${err instanceof Error ? err.message : String(err)}`)
       }
     },
 
@@ -101,7 +127,7 @@ export function coreSlice(
         return { logLines: next.length > 4000 ? next.slice(next.length - 4000) : next }
       }),
 
-    clearLog: () => set({ logLines: [] }),
+    clearLog: () => set({ logLines: [] })
 
     // ------------------------------------------------------------------------
     // 工程

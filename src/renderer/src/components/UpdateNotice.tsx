@@ -11,7 +11,11 @@
  *
  * 2. **不做自动下载安装**。那需要 electron-updater + 代码签名证书，
  *    而且这个工具的安装包 140 MB，后台偷偷下载不合适。
- *    这里只「提示 + 打开下载页」，用户自己决定什么时候装。
+ *    这里只「提示 + 引导到关于页手动装」：下载和启动安装器都由用户点一下触发。
+ *
+ * 3. **横幅不直接往浏览器扔**。点「查看更新」先切到「关于与版本」页 ——
+ *    那里能看见版本号、更新内容、带进度的应用内下载，下完直接启动安装器。
+ *    直接开 GitHub 发布页的话，用户还得自己判断下哪个文件、下完再回来双击。
  */
 
 import React from 'react'
@@ -49,6 +53,14 @@ interface Props {
   onDismiss?: () => void
   /** 横幅形态 */
   compact?: boolean
+  /**
+   * 点「查看更新」时去哪。
+   *
+   * 不传就退回「打开浏览器看发布页」（老行为，兜底用）；
+   * 传了就切到「关于与版本」页 —— 那里有应用内下载，下完直接装，
+   * 不用用户自己在发布页里找哪个文件、下完再回来双击。
+   */
+  onOpenAbout?: () => void
   /** 当前「启动时自动检查」开关状态（只有完整卡片用） */
   autoCheck?: boolean
   /** 切换自动检查 */
@@ -61,6 +73,7 @@ export function UpdateNotice({
   onCheck,
   onDismiss,
   compact = false,
+  onOpenAbout,
   autoCheck = true,
   onToggleAutoCheck
 }: Props): React.JSX.Element | null {
@@ -141,9 +154,24 @@ export function UpdateNotice({
             当前 v{info.currentVersion}
           </span>
         </div>
-        <Button size="sm" onClick={() => open(info.releaseUrl)}>
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => (onOpenAbout ? onOpenAbout() : open(info.releaseUrl))}
+          title={onOpenAbout ? '到「关于与版本」里下载（有进度，下完直接装）' : '在浏览器里打开发布页'}
+        >
           查看更新
         </Button>
+        {info.releaseUrl && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => open(info.releaseUrl)}
+            title="在浏览器里打开 GitHub 发布页"
+          >
+            ↗
+          </Button>
+        )}
         {onDismiss && (
           <Button size="sm" variant="ghost" onClick={onDismiss} title="本次启动不再提示">
             ✕
@@ -154,10 +182,13 @@ export function UpdateNotice({
   }
 
   // ---- 完整卡片 ----
-  const status = checking ? 'checking' : (info?.status ?? 'idle')
+  // 还没拿到结果（首帧 info 为 null）时也按「检查中」显示，
+  // 否则卡片会先空一下再填内容，看着像点了没反应。
+  const status = checking || !info ? 'checking' : info.status
 
   return (
     <Card
+      id="update-card"
       title="版本更新"
       hint="从 GitHub Releases 读取最新版本"
       actions={
@@ -167,14 +198,10 @@ export function UpdateNotice({
         </Button>
       }
     >
-      {status === 'checking' && (
-        <div className="small faint">正在连接 GitHub…</div>
-      )}
+      {status === 'checking' && <div className="small faint">正在连接 GitHub…</div>}
 
       {status === 'disabled' && (
-        <div className="small faint">
-          自动检查已关闭。点右上角「检查更新」可以手动查一次。
-        </div>
+        <div className="small faint">自动检查已关闭。点右上角「检查更新」可以手动查一次。</div>
       )}
 
       {status === 'error' && (
@@ -185,9 +212,7 @@ export function UpdateNotice({
             <button
               type="button"
               className="linkbtn"
-              onClick={() =>
-                open('https://github.com/zeal-hope-love/cmake-vscode-studio/releases')
-              }
+              onClick={() => open('https://github.com/zeal-hope-love/cmake-vscode-studio/releases')}
             >
               GitHub Releases
             </button>
@@ -256,10 +281,7 @@ export function UpdateNotice({
           {/* ---- 下载中：真实进度 ---- */}
           {downloading && (
             <div style={{ marginBottom: 12 }}>
-              <div
-                className="row"
-                style={{ justifyContent: 'space-between', marginBottom: 6 }}
-              >
+              <div className="row" style={{ justifyContent: 'space-between', marginBottom: 6 }}>
                 <span className="small">
                   正在下载
                   {dl && dl.total > 0 && (
@@ -271,14 +293,10 @@ export function UpdateNotice({
                   {dl && dl.total === 0 && dl.received > 0 && (
                     <span className="faint"> {mb(dl.received)} MB</span>
                   )}
-                  {dl && dl.speed > 0 && (
-                    <span className="faint"> · {mb(dl.speed)} MB/s</span>
-                  )}
+                  {dl && dl.speed > 0 && <span className="faint"> · {mb(dl.speed)} MB/s</span>}
                 </span>
                 <span className="row" style={{ gap: 8 }}>
-                  <span className="faint small">
-                    {dl && dl.percent >= 0 ? `${dl.percent}%` : '…'}
-                  </span>
+                  <span className="faint small">{dl && dl.percent >= 0 ? `${dl.percent}%` : '…'}</span>
                   <Button
                     size="sm"
                     variant="ghost"
@@ -303,8 +321,7 @@ export function UpdateNotice({
                     borderRadius: 99,
                     background: 'var(--accent)',
                     transition: 'width 0.2s linear',
-                    width:
-                      dl && dl.percent >= 0 ? `${dl.percent}%` : dl ? '35%' : '0%',
+                    width: dl && dl.percent >= 0 ? `${dl.percent}%` : dl ? '35%' : '0%',
                     ...(dl && dl.percent < 0
                       ? { animation: 'cv-progress-slide 1.2s ease-in-out infinite' }
                       : {})
@@ -357,11 +374,7 @@ export function UpdateNotice({
 
           {info.releaseUrl && !downloading && (
             <div style={{ marginBottom: 8 }}>
-              <button
-                type="button"
-                className="linkbtn"
-                onClick={() => open(info.releaseUrl)}
-              >
+              <button type="button" className="linkbtn" onClick={() => open(info.releaseUrl)}>
                 在浏览器里查看发布页
               </button>
             </div>
@@ -407,10 +420,7 @@ export function UpdateNotice({
             borderTop: '1px solid var(--border)'
           }}
         >
-          <label
-            className="row"
-            style={{ gap: 8, alignItems: 'center', cursor: 'pointer' }}
-          >
+          <label className="row" style={{ gap: 8, alignItems: 'center', cursor: 'pointer' }}>
             <input
               type="checkbox"
               checked={autoCheck}

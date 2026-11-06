@@ -105,6 +105,7 @@ export const useStudio = create<StudioState>()((set, get) => ({
   snapshots: [],
 
   helpOpen: false,
+  updateFocusSeq: 0,
   writtenProjects: [],
 
   // ---- 各域的动作 ----

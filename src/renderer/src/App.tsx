@@ -55,6 +55,7 @@ export default function App(): React.JSX.Element {
   const setError = useStudio((s) => s.setError)
   const projectRoot = useStudio((s) => s.projectRoot)
   const setPage = useStudio((s) => s.setPage)
+  const focusUpdate = useStudio((s) => s.focusUpdate)
   const browseProject = useStudio((s) => s.browseProject)
 
   React.useEffect(() => {
@@ -115,6 +116,8 @@ export default function App(): React.JSX.Element {
                 checking={false}
                 onCheck={() => void window.api.checkUpdate(true).then(setUpdate)}
                 onDismiss={() => setUpdateDismissed(true)}
+                /* 点「查看更新」落到「关于与版本」页，而不是把用户扔进浏览器 */
+                onOpenAbout={focusUpdate}
                 compact
               />
             </div>

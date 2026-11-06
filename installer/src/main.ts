@@ -294,14 +294,103 @@ function copyTreeOverwrite(src: string, dst: string): void {
 }
 
 
+/** 进程表里的一行 —— 只要「PID + 映像名」就够 */
+interface ProcEntry {
+  pid: number
+  name: string
+}
+
 /**
- * 检查目标程序是否正在运行。
+ * 列出系统里所有进程。
  *
- * 用 tasklist 而不是遍历进程 —— 安装器是 Electron，
- * 拿到的 process 列表里只有自己这个应用，看不到别的。
+ * 为什么不用 `tasklist`：它只能按映像名过滤、拿不到干净的 PID 列表，
+ * 输出还是给人看的固定宽度表格，解析起来很脆。
+ * 也不用 `wmic`：Win11 24H2 起已经被移除了，不能依赖。
+ *
+ * 查不到就返回空数组 —— 调用方会把「没有进程」当成「程序没在跑」，
+ * 这时继续安装是安全的；真被占用，复制那一步会给出明确的错误。
  */
-function isAppRunning(): Promise<boolean> {
-  const imageName = meta.executableName.replace(/\.exe$/i, '')
+function listProcesses(): Promise<ProcEntry[]> {
+  /*
+   * 让 PowerShell 直接输出 `pid|name`。
+   *
+   * 不走 ConvertTo-Csv：CSV 还要处理引号和列顺序，而且进程名里带空格很常见
+   * （"CV Studio.exe"），自己定分隔符最省心。这条命令是常量、不含用户输入，
+   * 不涉及注入。
+   */
+  const ps = 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)|$($_.Name)" }'
+
+  return new Promise((resolve) => {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+      // 进程多的机器输出能到几 MB，默认 1MB 会截断
+      { windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
+      (err, stdout) => {
+        if (err || !stdout) {
+          // 查不到就当没在跑：继续安装；真被占用会在复制那一步报明确的错
+          console.error('[installer] 枚举进程失败：', err?.message ?? '空输出')
+          return resolve([])
+        }
+        const out: ProcEntry[] = []
+        for (const line of stdout.split(/\r?\n/)) {
+          const parts = line.trim().split('|')
+          if (parts.length < 2) continue
+          const pid = Number(parts[0])
+          // 进程名理论上不含 |，但真含了也别把名字截断
+          const name = parts.slice(1).join('|')
+          if (!Number.isFinite(pid) || !name) continue
+          out.push({ pid, name })
+        }
+        resolve(out)
+      }
+    )
+  })
+}
+
+/**
+ * 找出「正在运行的 CV Studio」进程，**排除安装器自己**。
+ *
+ * ## 为什么不能再用 `taskkill /F /T /IM "CV Studio.exe"`
+ *
+ * 这个安装包最常见的启动方式是应用内更新：CV Studio 下载完 → spawn 安装器 →
+ * 用户在安装器里点「自动关闭并继续」。
+ *
+ * `/T` 的含义是「连子进程一起杀」。而安装器正是 CV Studio 拉起来的**子进程**
+ * ——`spawn(..., { detached: true })` 只让子进程不共享控制台，**不影响父子关系**。
+ * 于是 taskkill 顺着树把自己也杀了：安装窗口凭空消失，用户以为安装失败。
+ *
+ * 现在改成按 PID 逐个结束，**不带 `/T`**：
+ *   · Electron 的所有进程（主进程 / renderer / GPU / utility）映像名都相同，
+ *     全都在这个列表里，所以不靠 `/T` 也能清干净；
+ *   · 安装器自己的映像名是 `CV Studio Setup.exe`，本来就不匹配，
+ *     再加上 PID 排除，双保险；
+ *   · 父进程 CV Studio 被杀掉后，安装器是独立的 GUI 进程，不会跟着退出
+ *     （Windows 没有「父死子亡」这回事，除非进程被放进 kill-on-close 的 Job）。
+ *
+ * 注意**不要**顺手把父进程也排除掉 —— 那正是要关掉的那个。
+ */
+async function appProcesses(): Promise<ProcEntry[]> {
+  const all = await listProcesses()
+  const target = meta.executableName.toLowerCase()
+  return all.filter((p) => p.name.toLowerCase() === target && p.pid !== process.pid)
+}
+
+/** 结束单个进程。不带 `/T`，理由见上面 appProcesses 的注释 */
+function killProcess(pid: number): Promise<void> {
+  return new Promise((resolve) => {
+    execFile('taskkill.exe', ['/F', '/PID', String(pid)], { windowsHide: true }, () => resolve())
+  })
+}
+
+/**
+ * 快速判断「还有没有在跑」—— 轮询用。
+ *
+ * 只为了知道「关干净了没有」，不需要 PID，所以用 tasklist（几十毫秒）
+ * 而不是再拉一次 PowerShell（每次几百毫秒）。上面的 appProcesses 是
+ * 「要杀谁」时才用的重量级查询。
+ */
+function quickIsRunning(): Promise<boolean> {
   return new Promise((resolve) => {
     execFile(
       'tasklist.exe',
@@ -309,7 +398,8 @@ function isAppRunning(): Promise<boolean> {
       { windowsHide: true },
       (err, stdout) => {
         if (err) return resolve(false)
-        resolve(stdout.toLowerCase().includes(imageName.toLowerCase()))
+        // 「没有运行的任务」时 tasklist 输出的是提示文字，不包含 exe 名
+        resolve(stdout.toLowerCase().includes(meta.executableName.toLowerCase()))
       }
     )
   })
@@ -328,7 +418,9 @@ function isAppRunning(): Promise<boolean> {
  * @returns true 表示可以继续安装（本来就关着，或者成功关掉了）
  */
 async function ensureAppStopped(): Promise<{ ok: boolean; reason?: string; cancelled?: boolean }> {
-  if (!(await isAppRunning())) return { ok: true }
+  // 先枚举一次：既判断「在不在跑」，也顺便拿到待会儿要逐个结束的 PID
+  const running = await appProcesses()
+  if (running.length === 0) return { ok: true }
 
   const choice = await dialog.showMessageBox(win!, {
     type: 'question',
@@ -340,39 +432,48 @@ async function ensureAppStopped(): Promise<{ ok: boolean; reason?: string; cance
     detail:
       `安装需要覆盖程序文件，但 ${meta.productName} 还在运行，文件被占用。\n\n` +
       '点「自动关闭并继续」会结束它的所有进程（包括托盘里的），' +
-      '如果你正在里面做没保存的操作，请选「我自己关」。',
+      '如果你正在里面做没保存的操作，请选「我自己关」。\n\n' +
+      '关掉的只有主程序 —— 当前这个安装窗口会留着，装完可以直接启动新版本。',
     noLink: true
   })
 
   if (choice.response === 2) return { ok: false, cancelled: true }
   if (choice.response === 1) {
-    // 让用户自己去关，然后回头再查一次
-    const stillRunning = await isAppRunning()
-    if (stillRunning) {
-      return {
-        ok: false,
-        reason: `请先关闭 ${meta.productName}（记得连托盘图标一起退出），然后再点重试。`
-      }
+    /*
+     * 让用户自己去关，这边**必须等**。
+     *
+     * 原先查一次就返回，用户还没离开对话框呢，必然判定「还开着」——
+     * 等于这个按钮根本没用。现在最多等 20 秒，中途关掉就立刻继续。
+     */
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 500))
+      if (!(await quickIsRunning())) return { ok: true }
     }
-    return { ok: true }
+    return {
+      ok: false,
+      reason: `等了 20 秒，${meta.productName} 还在运行（记得连托盘图标一起退出），关掉后再点一次「安装」就行。`
+    }
   }
 
-  // 自动关闭：/F 强制，/T 连子进程一起（Electron 有一堆 renderer 子进程）
-  await new Promise<void>((resolve) => {
-    execFile(
-      'taskkill.exe',
-      ['/F', '/T', '/IM', meta.executableName],
-      { windowsHide: true },
-      () => resolve()
-    )
-  })
+  /*
+   * 自动关闭：按 PID 逐个结束，**不带 `/T`**。
+   *
+   * `/T` 会顺着进程树往下杀，而这个安装器正是 CV Studio 的子进程
+   * （应用内更新时由主进程 spawn），带 `/T` 就是把自己一起杀掉 ——
+   * 用户看到的现象是「点了自动关闭，安装窗口凭空消失」。
+   *
+   * 倒序（PID 从大到小）结束：子进程通常后启动、PID 更大，
+   * 先收拾子进程再收拾父进程，避免父进程先死留下短暂孤儿。
+   */
+  const ordered = [...running].sort((a, b) => b.pid - a.pid)
+  for (const p of ordered) await killProcess(p.pid)
 
   /*
    * taskkill 返回不代表进程已经退干净 —— Electron 的 GPU / 网络进程
    * 可能还在收尾。等最多 3 秒，每 300ms 查一次。
    */
   for (let i = 0; i < 10; i++) {
-    if (!(await isAppRunning())) return { ok: true }
+    if (!(await quickIsRunning())) return { ok: true }
     await new Promise((r) => setTimeout(r, 300))
   }
 

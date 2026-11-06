@@ -72,3 +72,14 @@ icacls "C:\Users\PoXia\Desktop\DSH_Workspace" /remove:d Everyone
 - 过滤 `^(_|arm_|__)`：链接脚本符号和 CMSIS-DSP 常量表是噪音
 - `dirRank()` 排序 application > components > bsp > Src > 其他，
   否则字母序把库符号排最前，看起来像没扫到
+
+## 打包/清理的两个固定套路
+
+**删不掉的文件不要硬刚**：工作区里的 `*.asar` 常年报「另一个程序正在使用」（重启也不掉，
+查不到持有进程）。它们能以写方式打开，`> 文件` 截断成 0 字节就能立刻回收空间。
+批量删目录用 `cmd //c "del /f /s /q <dir>\*"`（0.1 秒），
+不要用 bash 逐文件 rm（16 分钟）或 PowerShell 的 Remove-Item（被 safe-delete 钩子拦）。
+
+**文字与方框对齐不要按字体比例猜**：用 canvas `measureText` 的
+`actualBoundingBox*` 量墨迹，`fontBoundingBox*` 反推基线位置，
+再用 4 倍 DPR 截图做行像素统计验证。

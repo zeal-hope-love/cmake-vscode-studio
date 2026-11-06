@@ -114,6 +114,15 @@ export interface StudioState {
   /** 新手向导是否打开（首次启动自动开，之后从标题栏的「?」打开） */
   helpOpen: boolean
   /**
+   * 「去关于页看更新」的计数器。
+   *
+   * 顶部更新横幅点「查看更新」时不直接开浏览器，而是切到「关于与版本」页，
+   * 让用户在那里用应用内下载装。切页本身是 setPage 就能做的，但「滚到更新卡片
+   * 并闪一下」需要一个**每次点击都变化**的信号 —— 用自增序号，重复点击同一入口
+   * 也能再滚一次。
+   */
+  updateFocusSeq: number
+  /**
    * 本次会话里已经写入过配置的工程（小写路径）。
    *
    * 用集合而不是一个布尔值：之前是布尔，写完 A 工程再切到 B 工程时，
@@ -124,6 +133,8 @@ export interface StudioState {
   // ---- 动作 ----
   bootstrap: () => Promise<void>
   setPage: (page: PageKey) => void
+  /** 切到「关于与版本」并把更新卡片滚进视野（顶部更新横幅的「查看更新」用） */
+  focusUpdate: () => void
   setTheme: (theme: AppSettings['theme']) => Promise<void>
   /**
    * 保存任意设置项并同步到 store。

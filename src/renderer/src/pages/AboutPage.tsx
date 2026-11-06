@@ -23,27 +23,30 @@ export default function AboutPage(): React.JSX.Element {
   const [update, setUpdate] = React.useState<UpdateInfo | null>(null)
   const [checking, setChecking] = React.useState(false)
 
-  const doCheck = React.useCallback(async (force: boolean): Promise<void> => {
-    setChecking(true)
-    try {
-      setUpdate(await window.api.checkUpdate(force))
-    } catch (err) {
-      setUpdate({
-        currentVersion: appInfo?.version ?? '',
-        latestVersion: '',
-        hasUpdate: false,
-        releaseUrl: '',
-        releaseName: '',
-        notes: '',
-        publishedAt: '',
-        assets: [],
-        status: 'error',
-        detail: err instanceof Error ? err.message : String(err)
-      })
-    } finally {
-      setChecking(false)
-    }
-  }, [appInfo?.version])
+  const doCheck = React.useCallback(
+    async (force: boolean): Promise<void> => {
+      setChecking(true)
+      try {
+        setUpdate(await window.api.checkUpdate(force))
+      } catch (err) {
+        setUpdate({
+          currentVersion: appInfo?.version ?? '',
+          latestVersion: '',
+          hasUpdate: false,
+          releaseUrl: '',
+          releaseName: '',
+          notes: '',
+          publishedAt: '',
+          assets: [],
+          status: 'error',
+          detail: err instanceof Error ? err.message : String(err)
+        })
+      } finally {
+        setChecking(false)
+      }
+    },
+    [appInfo?.version]
+  )
 
   // 进页面就查一次（走缓存，不会每次都打 GitHub）
   React.useEffect(() => {
@@ -52,6 +55,32 @@ export default function AboutPage(): React.JSX.Element {
 
   const resetOnboarding = useStudio((s) => s.resetOnboarding)
   const openHelp = useStudio((s) => s.openHelp)
+
+  /*
+   * 从页面顶部的「有新版本」横幅点过来时，把更新卡片滚进视野并闪一下。
+   *
+   * 这一页的标题和版本信息在最上面，更新卡片排在第二块 —— 不滚的话
+   * 用户点完「查看更新」看到的是系统信息，会以为点错了。
+   * 序号每次点击都会自增，所以连着点也能再滚一次。
+   */
+  const updateFocusSeq = useStudio((s) => s.updateFocusSeq)
+  const [flash, setFlash] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!updateFocusSeq) return
+    // 等一帧，让切页后的卡片真正挂载到 DOM 上再滚
+    const t = setTimeout(() => {
+      document.getElementById('update-card')?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      setFlash(true)
+    }, 80)
+    return () => clearTimeout(t)
+  }, [updateFocusSeq])
+
+  React.useEffect(() => {
+    if (!flash) return
+    const t = setTimeout(() => setFlash(false), 1600)
+    return () => clearTimeout(t)
+  }, [flash])
 
   return (
     <>
@@ -72,13 +101,15 @@ export default function AboutPage(): React.JSX.Element {
       />
 
       <PageBody>
-        <UpdateNotice
-          info={update}
-          checking={checking}
-          onCheck={() => void doCheck(true)}
-          autoCheck={settings.checkUpdates !== false}
-          onToggleAutoCheck={(v) => void saveSettings({ checkUpdates: v })}
-        />
+        <div className={flash ? 'card-flash' : undefined}>
+          <UpdateNotice
+            info={update}
+            checking={checking}
+            onCheck={() => void doCheck(true)}
+            autoCheck={settings.checkUpdates !== false}
+            onToggleAutoCheck={(v) => void saveSettings({ checkUpdates: v })}
+          />
+        </div>
 
         <Card title="版本与运行环境" hint="出问题时把这段发出来，能省很多来回">
           <AboutInfo />
@@ -108,9 +139,7 @@ export default function AboutPage(): React.JSX.Element {
           <div className="small muted" style={{ lineHeight: 1.9 }}>
             <div>
               · 设置 / 模板 / 写入快照都在{' '}
-              <span className="mono">
-                {appInfo?.userData ?? '%APPDATA%\\CV Studio'}
-              </span>
+              <span className="mono">{appInfo?.userData ?? '%APPDATA%\\CV Studio'}</span>
             </div>
             <div>· 卸载或删掉这个目录，不会影响任何工程</div>
             <div>

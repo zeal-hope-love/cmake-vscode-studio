@@ -44,7 +44,21 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const staging = process.env.CVSTUDIO_STAGING
   ? resolve(root, process.env.CVSTUDIO_STAGING)
   : join(root, '.installer-build')
-const unpacked = join(root, 'release', 'win-unpacked')
+/*
+ * 应用本体目录（要被打进安装包的那份）。
+ *
+ * 默认是 release/win-unpacked，但它**经常删不掉**：OneDrive 把桌面重定向成
+ * 同步目录，`resources/app.asar` 会被同步进程或杀软短暂独占，于是 electron-builder
+ * 既没法重打、也没法 `trash` 旧目录，整条流水线在第一步就断。
+ *
+ * 这时换个输出目录打一遍，再把这里指过去就行：
+ *
+ *   npx electron-builder --win --dir -c.directories.output=release-203
+ *   CVSTUDIO_UNPACKED=release-203/win-unpacked npm run dist:setup
+ */
+const unpacked = process.env.CVSTUDIO_UNPACKED
+  ? resolve(root, process.env.CVSTUDIO_UNPACKED)
+  : join(root, 'release', 'win-unpacked')
 
 function step(msg) {
   console.log(`\n[installer] ${msg}`)

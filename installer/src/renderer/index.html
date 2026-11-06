@@ -147,20 +147,23 @@
         font-size: 32px;
         font-weight: 700;
         letter-spacing: -0.02em;
-        line-height: 1;
+        /*
+         * 行高取 33px 不是 1：
+         * cv 的墨迹底边正好落在基线上，想让方框底边贴着它，就得知道基线在行盒里的位置。
+         * 基线 = (行高 - 字体升降部总和) / 2 + 升部。Segoe 在 32px 下升降部是 35/8
+         * （和 = 43），所以 line-height: 1（32px）时基线在 29.5px —— 半个像素，
+         * 黑方块的上沿会被抗锯齿糊成灰边。取 33px 后基线正好落在 30px 的整像素上。
+         */
+        line-height: 33px;
         color: var(--fg);
       }
 
       /*
-       * 方框要**贴着 cv 的字身**，不能一高一低。
+       * 方框要**贴着 cv 的字身**：上沿压 x-height 顶，下沿压基线。
        *
-       * 做法：mark 是 32px + line-height 1，行盒底边在基线下 8px（Segoe 的
-       * 升部/降部是 3:1）。所以用 align-items: flex-end 让方框底边对齐行盒底，
-       * 再用 margin-bottom 把方框压回基线上；高度取 16px = cv 的 x-height，
-       * 方框的上下沿就正好压住字母的上下沿。
-       *
-       * margin-bottom 实测取 6px 而不是 8px —— 光靠字体的升部/降部比例算会差 2px，
-       * 这个值是拿放大截图对出来的，别按公式改回去。
+       * align-items: flex-end 让方框（含 margin）贴住 mark 行盒的底边，
+       * margin-bottom 把方框抬起到基线上 —— 值 = 行盒底到基线的距离 = 33 - 30 = 3px。
+       * 高度 16px 就是 32px 字号下的 x-height（己实测），两边就齐了。
        *
        * letter-spacing 会在最后一个字母后多留一段空白，右边看着比左边厚，
        * 用 text-indent 反向补回来。
@@ -169,7 +172,7 @@
         display: flex;
         align-items: center;
         height: 16px;
-        margin-bottom: 6px;
+        margin-bottom: 3px;
         padding: 0 5px 0 7px;
         font-size: 10px;
         font-weight: 700;
