@@ -87,6 +87,21 @@ icacls "C:\Users\PoXia\Desktop\DSH_Workspace" /remove:d Everyone
 - `dirRank()` 排序 application > components > bsp > Src > 其他，
   否则字母序把库符号排最前，看起来像没扫到
 
+## 底座版本：发版前必须先查一次（用户明确要求的流程）
+
+应用版本号（2.0.x）≠ 底座版本。用户看不到 Electron 是 45 还是 38，
+所以「连发三个版本底座没动」是真会发生的，必须主动查，别等他问。
+
+一条命令：`npm run check:kernels`（`--strict` 大版本落后退出码 1，`--offline` 不联网）
+- 分层：运行时内核 `electron` / 打包器 `electron-builder`（自带 NSIS）/
+  构建链 `electron-vite`+`vite`+`@vitejs/plugin-react`（三个必须一起升）/
+  界面 `react`+`zustand` / 工具 `typescript`+`@types/*`
+- **@types/node 锁 24 是对的**，别升 26 —— 要跟 Electron 内置 Node 大版本对齐
+- 发补丁版只升补丁/小版本；**发大版本整条底座一起升，单独一个 commit**
+- 升完必须重打包验证（dev 跑不到 asar / 原生模块 / 沙箱那条路）
+- `dist:setup` 开头会自动调一次（只提示不拦截），`CVSTUDIO_SKIP_KERNEL_CHECK=1` 关掉
+- 文档：`docs/DEVELOPMENT.md` 第五节
+
 ## 打包/清理的两个固定套路
 
 **删不掉的文件不要硬刚**：工作区里的 `*.asar` 常年报「另一个程序正在使用」（重启也不掉，

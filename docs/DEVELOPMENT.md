@@ -620,7 +620,7 @@ node -e "const b=require('fs').readFileSync('release/win-unpacked/resources/app.
 
 ## 五、发版前先过一遍「底座」
 
-**应用自己的版本号（2.0.4）和它跑在什么底座上是两件事。**
+**应用自己的版本号（2.1.0）和它跑在什么底座上是两件事。**
 
 界面上只有我们自己的 2.0.x；Electron 是 45 还是 38、安装器引擎是 26.15 还是 26.18，
 用户完全看不出来。所以会出现「连着发了三个版本，其实底座一个没动」这种情况 ——
@@ -665,7 +665,7 @@ npm run check:kernels
 
 ### 什么时候升，怎么升
 
-**发补丁版（2.0.4 → 2.0.5）**：只升补丁 / 小版本，不碰大版本。
+**发补丁版（2.1.0 → 2.1.1）**：只升补丁 / 小版本，不碰大版本。
 
 ```powershell
 npm install -D electron-builder@latest react@latest react-dom@latest zustand@latest
@@ -702,6 +702,54 @@ npm run typecheck; npm run selftest; npm run build
 ```powershell
 $env:CVSTUDIO_SKIP_KERNEL_CHECK=1; npm run dist:setup
 ```
+
+### 真升了一次之后记下的两个坑（2.1.0）
+
+**一、TypeScript 7 把 `baseUrl` 删了。**
+
+升到 7.x 后 `npm run typecheck` 会直接报：
+
+```
+tsconfig.node.json(3,3): error TS5090: Non-relative paths are not allowed.
+tsconfig.node.json(3,3): error TS5102: Option 'baseUrl' has been removed.
+```
+
+`baseUrl` 从 7.0 起不再支持，`paths` 里的值必须写成相对 tsconfig 文件的路径：
+
+```jsonc
+// 升之前
+"baseUrl": ".",
+"paths": { "@shared/*": ["src/shared/*"] }
+
+// 升之后（去掉 baseUrl，路径补 ./）
+"paths": { "@shared/*": ["./src/shared/*"] }
+```
+
+改完只有 `tsconfig.base.json` 一处，运行时的别名靠 `electron.vite.config.ts` 里的
+`resolve.alias`，不受影响。顺带一提：TS 7 是 Go 重写的原生编译器，typecheck 快了一个数量级。
+
+**二、打包会卡在 `unlink app.asar`，报 EBUSY。**
+
+```
+Error: EBUSY: resource busy or locked, unlink '...\trimmed\resources\app.asar'
+```
+
+Windows 上删「刚写完的大 asar」会被杀软实时扫描 / 同步盘 / 沙箱扫描握住句柄，
+重试几秒也未必松手。打安装器那一步原来要**先裁到 `trimmed/`、再整棵复制进 `payload/`、
+最后删掉 `trimmed/`**，卡就卡在最后这一删 —— 前面几十秒全白干。
+
+现在改成**直接裁到最终位置**，少一次 265 MB 复制、也少一次删除
+（`tools/build-installer.mjs` 里 `trimPayload(unpacked, payloadDir)`）。
+另外所有删目录都走 `rmWithRetry()`，失败按 80→800ms 退避重试 8 次。
+
+万一还是删不掉（句柄被长期占着），换暂存目录重来即可：
+
+```powershell
+$env:CVSTUDIO_STAGING='.installer-build2'; npm run dist:setup
+```
+
+残骸目录（`.installer-build*`、`release-*`）空间回收用截断法，不要硬删 ——
+见 `docs/TROUBLESHOOTING.md` 的「删不掉的文件」。
 
 ---
 
