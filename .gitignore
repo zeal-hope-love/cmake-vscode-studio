@@ -39,3 +39,6 @@ release-*/
 
 # 自定义安装器的构建暂存目录（CVSTUDIO_STAGING 可以换名，比如 .installer-build2）
 .installer-build*/
+
+# 外部工具写的设置目录，跟本项目无关
+.arts/

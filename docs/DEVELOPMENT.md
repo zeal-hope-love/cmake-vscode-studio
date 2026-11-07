@@ -335,14 +335,15 @@ $f = "...\release\win-unpacked\resources\app.asar"
 try { $fs = [IO.File]::Open($f,'Open','Read','None'); $fs.Close(); "FREE" } catch { "LOCKED" }
 ```
 
-`LOCKED` 就换个输出目录打，再告诉安装器脚本去哪拿应用本体：
+`LOCKED` 就换个输出目录打 —— 一个变量同时管「打哪儿」和「读哪儿」：
 
 ```bash
-npx electron-builder --win --dir -c.directories.output=release-203
-CVSTUDIO_UNPACKED=release-203/win-unpacked CVSTUDIO_STAGING=.tmp/stage-r6 npm run dist:setup
+CVSTUDIO_UNPACKED=release-203/win-unpacked npm run dist:setup
 ```
 
-（`CVSTUDIO_UNPACKED` 是 `tools/build-installer.mjs` 支持的，默认仍是 `release/win-unpacked`。）
+（以前要手敲两条命令：先 `npx electron-builder --dir -c.directories.output=...`，
+再把这个变量指过去。只改变量不改输出目录等于没绕开 —— electron-builder 照样写
+`release/`，照样 EBUSY。现在 `tools/build-installer.mjs` 会把输出目录一起改掉。）
 
 
 ---
@@ -747,6 +748,13 @@ Windows 上删「刚写完的大 asar」会被杀软实时扫描 / 同步盘 / �
 ```powershell
 $env:CVSTUDIO_STAGING='.installer-build2'; npm run dist:setup
 ```
+
+**打包成功后会自动清掉暂存目录**（产物已经复制到 `release/`，留着没用）。
+清不掉不算失败，只打印一行提示 —— 想看安装器界面现场就
+`CVSTUDIO_KEEP_STAGING=1`。
+
+> 为什么以前每打一次就攒一个：脚本只在**开头**清暂存目录、结尾不管，
+> 于是 `.installer-build`、`-2`、`-3`、`-4` 一直累加。现在结尾补上了。
 
 残骸目录（`.installer-build*`、`release-*`）空间回收用截断法，不要硬删 ——
 见 `docs/TROUBLESHOOTING.md` 的「删不掉的文件」。

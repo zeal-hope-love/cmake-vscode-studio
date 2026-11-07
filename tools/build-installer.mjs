@@ -75,14 +75,15 @@ function rmWithRetry(target, tries = 8) {
  * 同步目录，`resources/app.asar` 会被同步进程或杀软短暂独占，于是 electron-builder
  * 既没法重打、也没法 `trash` 旧目录，整条流水线在第一步就断。
  *
- * 这时换个输出目录打一遍，再把这里指过去就行：
+ * 这时换个目录打一遍就行（一个变量同时管「打哪儿」和「读哪儿」，
+ * 免得手敲两条命令还容易只改一半）：
  *
- *   npx electron-builder --win --dir -c.directories.output=release-203
  *   CVSTUDIO_UNPACKED=release-203/win-unpacked npm run dist:setup
  */
-const unpacked = process.env.CVSTUDIO_UNPACKED
+const unpackedOverride = process.env.CVSTUDIO_UNPACKED
   ? resolve(root, process.env.CVSTUDIO_UNPACKED)
-  : join(root, 'release', 'win-unpacked')
+  : null
+const unpacked = unpackedOverride ?? join(root, 'release', 'win-unpacked')
 
 function step(msg) {
   console.log(`\n[installer] ${msg}`)
@@ -145,7 +146,16 @@ const sourceAt = Math.max(
   existsSync(outMain) ? statSync(outMain).mtimeMs : 0
 )
 if (!existsSync(unpackedExe) || builtAt < sourceAt) {
-  runBuilder(['--win', '--dir'], root)
+  /*
+   * 指定了 CVSTUDIO_UNPACKED 时，electron-builder 也得往那个目录打 ——
+   * 否则它照样写 release/，撞上被占住的旧 win-unpacked 就是 EBUSY，
+   * 变量只改了「读」不改「写」，等于没绕开。
+   */
+  const builderArgs = ['--win', '--dir']
+  if (unpackedOverride) {
+    builderArgs.push(`-c.directories.output=${dirname(unpackedOverride)}`)
+  }
+  runBuilder(builderArgs, root)
 } else {
   console.log(`  复用已有的 ${unpacked}`)
 }
@@ -385,4 +395,30 @@ if (existsSync(produced)) {
   console.log(`\n[installer] 完成：${finalExe}（${sizeMB} MB）`)
 } else {
   throw new Error(`没找到产物：${produced}`)
+}
+
+/*
+ * 打完就擦掉暂存目录。
+ *
+ * 以前只在**开头**清一次（rmWithRetry(staging)），结尾不管，于是每跑一次
+ * dist:setup 就在根目录留一份 500 MB 左右的 .installer-build/ ——
+ * 里面是 payload（裁好的应用本体 265 MB）和 out/（安装器自己的 win-unpacked）。
+ * 连续改几版就会攒出 .installer-build、-2、-3、-4 一堆。
+ *
+ * 产物已经复制到 release/ 了，暂存目录没有保留价值。清不掉不算失败：
+ * Windows 上文件刚写完常被杀软 / 同步盘 / 扫描进程短暂占住，重试几秒也未必松手，
+ * 那时只是留个目录，下次打包开头还会再清一遍。
+ *
+ * 想看现场就 CVSTUDIO_KEEP_STAGING=1（调试安装器界面时有用）。
+ */
+if (process.env.CVSTUDIO_KEEP_STAGING === '1') {
+  console.log(`  暂存目录保留：${staging}（CVSTUDIO_KEEP_STAGING=1）`)
+} else {
+  try {
+    rmWithRetry(staging, 3)
+    console.log('  暂存目录已清掉')
+  } catch {
+    console.log(`  暂存目录没清掉（有进程占着文件），下次打包会自动重试`)
+    console.log(`  想现在清就用 tools\\cleanup-leftovers.bat（关掉占用的程序再双击）`)
+  }
 }
