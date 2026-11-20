@@ -107,6 +107,8 @@ export function Sidebar(): React.JSX.Element {
   const packs = useStudio((s) => s.packs)
   const activePackId = useStudio((s) => s.activePackId)
   const setActivePackId = useStudio((s) => s.setActivePackId)
+  /** 有新版时给底部「设置」挂角标（芯片被「先不提醒」收起来后的兜底入口） */
+  const hasUpdate = useStudio((s) => s.updateState?.info?.hasUpdate === true)
   const { width, dragging, startDrag } = useStoredWidth('nav', 214, 170, 420)
 
   /**
@@ -294,20 +296,22 @@ export function Sidebar(): React.JSX.Element {
           </div>
         )}
 
-        {/* 关于固定在底部，随时能找到 */}
-        <div className="sidebar__section">关于</div>
+        {/* 设置固定在底部：外观（主题）、版本更新、关于都在这一页 */}
+        <div className="sidebar__section">应用</div>
         <button
           type="button"
-          className={activePage === 'about' ? 'navitem navitem--active' : 'navitem'}
-          onClick={() => setPage('about')}
-          title="关于与版本"
+          className={activePage === 'preferences' ? 'navitem navitem--active' : 'navitem'}
+          onClick={() => setPage('preferences')}
+          title="设置：外观、版本更新、关于"
         >
           <span className="navitem__icon">
-            <Icons.info />
+            <Icons.settings />
           </span>
           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            关于与版本
+            设置
           </span>
+          {/* 有更新时挂个角标 —— 标题栏芯片被「这一版先不提醒」收掉后，这里还在 */}
+          {hasUpdate && <span className="navitem__badge">新</span>}
         </button>
       </nav>
 

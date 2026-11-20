@@ -98,18 +98,30 @@ export const IPC = {
    */
   packPortProgress: 'pack:portProgress',
 
-  /** 检查更新（读 GitHub Releases） */
+  /**
+   * 更新相关。
+   *
+   * 整套状态（查到了没 / 下到哪了 / 能不能重启装）由**主进程**唯一持有，
+   * 这里只有两类通道：
+   *   · 查询 / 动作（invoke）：checkUpdate / downloadUpdate / cancel / install
+   *   · 状态推送（send）：updateState —— 每次状态或进度变化都整份推一份
+   *
+   * 为什么整份推而不是推增量：状态字段就这么几个，整份推让渲染进程
+   * 完全无状态（只负责显示），窗口重载后拉一次 getUpdateState 就能复原。
+   */
   checkUpdate: 'app:checkUpdate',
-  /** 打开 Release 页面 / 下载指定附件 */
-  openExternal: 'app:openExternal',
-  /** 应用内下载安装包 */
+  /** 取当前更新状态（窗口启动 / 重载时用） */
+  getUpdateState: 'app:getUpdateState',
+  /** 状态变更推送（主进程 → 渲染进程） */
+  updateState: 'app:updateState',
+  /** 手动开始 / 重试下载 */
   downloadUpdate: 'app:downloadUpdate',
-  /** 下载进度推送 */
-  updateDownloadProgress: 'app:updateDownloadProgress',
   /** 取消下载 */
   cancelUpdateDownload: 'app:cancelUpdateDownload',
-  /** 启动下载好的安装包 */
-  runUpdateInstaller: 'app:runUpdateInstaller',
+  /** 启动安装器并退出应用（重启完成更新） */
+  installUpdate: 'app:installUpdate',
+  /** 打开 Release 页面 / 下载链接 / 文件夹 */
+  openExternal: 'app:openExternal',
 
   templateList: 'template:list',
   templateSave: 'template:save',
@@ -248,30 +260,32 @@ export interface StudioApi {
     projectRoot: string
   ): Promise<import('../packTypes').PackPortPreflightResult>
   /**
-   * 检查有没有新版本。
+   * 立刻检查有没有新版本（会顺带按设置自动下载）。
    *
    * @param force 忽略缓存强制重新请求（用户点「检查更新」时）
+   *
+   * 返回的是**整份更新状态**而不是单次检测结果 —— 因为检查完可能已经开始
+   * 自动下载了，界面需要拿到那一刻的真实阶段（比如 phase = downloading）。
    */
-  checkUpdate(force?: boolean): Promise<import('../updateTypes').UpdateInfo>
-  /** 用系统浏览器打开 URL（Release 页面、下载链接） */
+  checkUpdate(force?: boolean): Promise<import('../updateTypes').UpdateState>
+  /** 用系统浏览器打开 URL（Release 页面、下载链接、安装包所在文件夹） */
   openExternal(url: string): Promise<void>
 
-  /** 在应用内下载更新包，返回下载好的文件路径 */
-  downloadUpdate(
-    url: string,
-    fileName: string
-  ): Promise<{
-    ok: boolean
-    path?: string
-    error?: string
-    cancelled?: boolean
-  }>
-  /** 订阅下载进度。返回取消订阅函数 */
-  onUpdateDownloadProgress(handler: (p: import('../updateTypes').DownloadProgress) => void): () => void
+  /** 取当前更新状态（窗口挂载时先拉一次，之后靠推送） */
+  getUpdateState(): Promise<import('../updateTypes').UpdateState>
+  /** 订阅更新状态变化。返回取消订阅函数 */
+  onUpdateState(handler: (s: import('../updateTypes').UpdateState) => void): () => void
+  /** 手动开始 / 重试下载（自动下载关闭时用） */
+  downloadUpdate(): Promise<import('../updateTypes').UpdateState>
   /** 取消进行中的下载 */
   cancelUpdateDownload(): Promise<void>
-  /** 启动下载好的安装包 */
-  runUpdateInstaller(path: string): Promise<{ ok: boolean; error?: string }>
+  /**
+   * 启动安装器并退出应用 —— 「重启更新」走这条。
+   *
+   * 安装器是独立进程，退出应用是为了让它能覆盖正在被占用的 exe；
+   * 所以这个调用正常返回 ok 之后，窗口会很快消失，别再依赖后续 UI 反馈。
+   */
+  installUpdate(): Promise<{ ok: boolean; error?: string }>
 
   /** 执行移植流水线（先存快照） */
   packPortInstall(options: {

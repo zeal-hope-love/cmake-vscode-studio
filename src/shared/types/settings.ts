@@ -39,6 +39,16 @@ export interface AppSettings {
    */
   checkUpdates: boolean
   /**
+   * 检测到新版本就**自动下载**安装包（默认开）。
+   *
+   * 默认开的理由：这个工具的更新包 100 多 MB，用户点一下「下载」再盯着进度条
+   * 纯属浪费注意力 —— 后台悄悄下好，下完提示一句「重启更新」，点一下就装完。
+   *
+   * 关掉之后流程退回手动：只在标题栏提示有新版本，下载按钮要自己点。
+   * 给「流量紧张 / 不想让应用自己联网下大文件」的人留个开关。
+   */
+  autoDownloadUpdates: boolean
+  /**
    * Live Watch 的默认值（跨工程记忆）。
    * 这是「用户习惯」而不是「工程属性」，所以放设置里。
    *
@@ -69,7 +79,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   liveWatch: true,
   liveWatchSamplesPerSecond: 4,
   liveWatchRefreshRate: 300,
-  checkUpdates: true
+  checkUpdates: true,
+  autoDownloadUpdates: true
 }
 
 // ==========================================================================

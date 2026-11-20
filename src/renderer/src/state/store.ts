@@ -41,6 +41,7 @@ import { runSlice } from './slices/run'
 import { templatesSlice } from './slices/templates'
 import { packsSlice } from './slices/packs'
 import { historySlice } from './slices/history'
+import { updateSlice } from './slices/update'
 import { canonicalJson } from './helpers'
 
 export type {
@@ -106,6 +107,8 @@ export const useStudio = create<StudioState>()((set, get) => ({
 
   helpOpen: false,
   updateFocusSeq: 0,
+  updateState: null,
+  updateDismissedVersion: null,
   writtenProjects: [],
 
   // ---- 各域的动作 ----
@@ -116,7 +119,8 @@ export const useStudio = create<StudioState>()((set, get) => ({
   ...runSlice(set, get),
   ...templatesSlice(set, get),
   ...packsSlice(set, get),
-  ...historySlice(set, get)
+  ...historySlice(set, get),
+  ...updateSlice(set, get)
 }))
 
 // --------------------------------------------------------------------------

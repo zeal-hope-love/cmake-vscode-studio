@@ -156,21 +156,24 @@ const api: StudioApi = {
   onApplyProgress: (handler) =>
     subscribe<{ runId: string; step: PackApplyStep }>(IPC.packApplyProgress, handler),
 
+  /*
+   * 更新：状态在主进程，这里只是订阅 + 转发动作。
+   * 状态推送是**整份**的（UpdateState），渲染进程不需要自己拼装。
+   */
   checkUpdate: (force?: boolean) =>
-    ipcRenderer.invoke(IPC.checkUpdate, force) as Promise<import('@shared/updateTypes').UpdateInfo>,
-  openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url) as Promise<void>,
-  downloadUpdate: (url: string, fileName: string) =>
-    ipcRenderer.invoke(IPC.downloadUpdate, url, fileName) as Promise<{
-      ok: boolean
-      path?: string
-      error?: string
-      cancelled?: boolean
-    }>,
-  onUpdateDownloadProgress: (handler) =>
-    subscribe<import('@shared/updateTypes').DownloadProgress>(IPC.updateDownloadProgress, handler),
+    ipcRenderer.invoke(IPC.checkUpdate, force) as Promise<
+      import('@shared/updateTypes').UpdateState
+    >,
+  getUpdateState: () =>
+    ipcRenderer.invoke(IPC.getUpdateState) as Promise<import('@shared/updateTypes').UpdateState>,
+  onUpdateState: (handler) =>
+    subscribe<import('@shared/updateTypes').UpdateState>(IPC.updateState, handler),
+  downloadUpdate: () =>
+    ipcRenderer.invoke(IPC.downloadUpdate) as Promise<import('@shared/updateTypes').UpdateState>,
   cancelUpdateDownload: () => ipcRenderer.invoke(IPC.cancelUpdateDownload) as Promise<void>,
-  runUpdateInstaller: (path: string) =>
-    ipcRenderer.invoke(IPC.runUpdateInstaller, path) as Promise<{ ok: boolean; error?: string }>,
+  installUpdate: () =>
+    ipcRenderer.invoke(IPC.installUpdate) as Promise<{ ok: boolean; error?: string }>,
+  openExternal: (url: string) => ipcRenderer.invoke(IPC.openExternal, url) as Promise<void>,
 
   cmakeTrashFiles: (projectRoot, relPaths) =>
     ipcRenderer.invoke(IPC.cmakeTrashFiles, projectRoot, relPaths) as Promise<{

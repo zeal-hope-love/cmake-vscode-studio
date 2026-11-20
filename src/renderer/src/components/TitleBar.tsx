@@ -1,26 +1,26 @@
 /**
  * 无边框标题栏（配合主进程的 titleBarOverlay）。
  *
- * 这里只放「跟当前工程无关」的东西：品牌、路径、帮助、主题。
+ * 这里只放「跟当前工程无关」的东西：品牌、路径、帮助、更新。
  * 「预览 / 写入配置」已经挪到顶部工作流条的第三步 —— 那两个动作是工作流的一部分，
  * 放在右上角会让人看不出和「第三步」是一回事。
+ *
+ * 主题下拉**已经挪到设置页**：它一年改一次，不值得在标题栏常驻占位。
+ * 现在右上角留给「更新」—— 那个恰好是唯一需要「不看页面上哪一页都能发现」的东西。
  */
 
 import React from 'react'
-import { themeLabel, useStudio } from '../state/store'
-import { Button, Select } from './ui'
+import { useStudio } from '../state/store'
+import { Button } from './ui'
 import { Icons, LogoMark } from './icons'
-import type { AppSettings } from '@shared/types'
+import { UpdateChip } from './UpdateChip'
 
 export function TitleBar(): React.JSX.Element {
   const projectRoot = useStudio((s) => s.projectRoot)
-  const project = useStudio((s) => s.project)
   const appInfo = useStudio((s) => s.appInfo)
   const optionsDirty = useStudio((s) => s.optionsDirty)
   const manualSections = useStudio((s) => s.manualSections)
   const regenerate = useStudio((s) => s.regenerate)
-  const theme = useStudio((s) => s.settings.theme)
-  const setTheme = useStudio((s) => s.setTheme)
 
   return (
     <header className="titlebar">
@@ -73,20 +73,8 @@ export function TitleBar(): React.JSX.Element {
           ?
         </Button>
 
-        {/* 主题用下拉，不用「点一下循环」—— 三个选项一眼能看全，也不会点过头 */}
-        <div className="theme-select" title={`主题：${themeLabel(theme)}`}>
-          <Icons.theme />
-          <Select
-            value={theme}
-            aria-label="主题"
-            onChange={(e) => void setTheme(e.target.value as AppSettings['theme'])}
-            options={[
-              { value: 'system', label: '跟随系统' },
-              { value: 'light', label: '浅色' },
-              { value: 'dark', label: '深色' }
-            ]}
-          />
-        </div>
+        {/* 有更新时才出现的芯片：进度 / 重启更新，点开是快捷面板 */}
+        <UpdateChip />
       </div>
     </header>
   )

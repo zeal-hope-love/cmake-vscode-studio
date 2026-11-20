@@ -12,8 +12,6 @@ import { Sidebar, StatusBar, ToastHost } from './components/shell'
 import { PreviewModal } from './components/PreviewModal'
 import { Onboarding } from './components/Onboarding'
 import { Alert, Button } from './components/ui'
-import { UpdateNotice } from './components/UpdateNotice'
-import type { UpdateInfo } from '@shared/updateTypes'
 import ProjectPage from './pages/ProjectPage'
 import SourcesPage from './pages/SourcesPage'
 import PacksPage from './pages/PacksPage'
@@ -26,7 +24,7 @@ import ProbeSettingsPage from './pages/ProbeSettingsPage'
 import TemplatesPage from './pages/TemplatesPage'
 import InspectPage from './pages/InspectPage'
 import HistoryPage from './pages/HistoryPage'
-import AboutPage from './pages/AboutPage'
+import AppSettingsPage from './pages/AppSettingsPage'
 import BuildPage from './pages/BuildPage'
 
 const PAGES: Record<PageKey, () => React.JSX.Element> = {
@@ -43,20 +41,17 @@ const PAGES: Record<PageKey, () => React.JSX.Element> = {
   probe: ProbeSettingsPage,
   tools: ToolsPage,
   history: HistoryPage,
-  about: AboutPage
+  preferences: AppSettingsPage
 }
 
 export default function App(): React.JSX.Element {
   const bootstrap = useStudio((s) => s.bootstrap)
   const bindRunEvents = useStudio((s) => s.bindRunEvents)
   const bindWriteProgress = useStudio((s) => s.bindWriteProgress)
+  const bindUpdateState = useStudio((s) => s.bindUpdateState)
   const activePage = useStudio((s) => s.activePage)
   const errorText = useStudio((s) => s.errorText)
   const setError = useStudio((s) => s.setError)
-  const projectRoot = useStudio((s) => s.projectRoot)
-  const setPage = useStudio((s) => s.setPage)
-  const focusUpdate = useStudio((s) => s.focusUpdate)
-  const browseProject = useStudio((s) => s.browseProject)
 
   React.useEffect(() => {
     void bootstrap()
@@ -66,32 +61,15 @@ export default function App(): React.JSX.Element {
   React.useEffect(() => bindWriteProgress(), [bindWriteProgress])
 
   /*
-   * 启动时的更新检查。
+   * 更新状态。
    *
-   * 三个刻意的设计：
-   *   1. **延迟 3 秒** —— 先让界面出来、让用户能干活，
-   *      别在启动那一刻跟主进程抢资源。
-   *   2. **只查一次**（会话内记忆）—— 切页、重渲染都不再触发。
-   *   3. **失败静默** —— 没网、被墙、限流都不打扰，只在「关于」页显示。
-   *      用户打开工具是为了干活，不是来看错误提示的。
+   * 检查本身**不在这里发起** —— 主进程启动 4 秒后自己查、查到就自动下载
+   * （见 services/update/updateService.ts），这样窗口重载、关掉再开都不会
+   * 把进度搞丢，也不会一个会话里重复打 GitHub。
+   *
+   * 这里只订阅：拿到状态后标题栏芯片和设置页同时更新。
    */
-  const [update, setUpdate] = React.useState<UpdateInfo | null>(null)
-  const [updateDismissed, setUpdateDismissed] = React.useState(false)
-  const updateChecked = React.useRef(false)
-
-  React.useEffect(() => {
-    if (updateChecked.current) return
-    updateChecked.current = true
-    const t = setTimeout(() => {
-      void window.api
-        .checkUpdate(false)
-        .then((info) => setUpdate(info))
-        .catch(() => {
-          /* 静默失败：这里不打扰用户 */
-        })
-    }, 3000)
-    return () => clearTimeout(t)
-  }, [])
+  React.useEffect(() => bindUpdateState(), [bindUpdateState])
 
   const Page = PAGES[activePage]
 
@@ -108,21 +86,6 @@ export default function App(): React.JSX.Element {
             都会先渲染自己的 PageHeader，正文用统一的 <NoProject />。
             外壳拦的话页面标题会丢，而且和页面自己的空状态长得不一样。
           */}
-          {/* 有新版本时在页面顶部挂一条提示；点 ✕ 就本次启动不再出现 */}
-          {!updateDismissed && (
-            <div style={{ padding: '14px 18px 0' }}>
-              <UpdateNotice
-                info={update}
-                checking={false}
-                onCheck={() => void window.api.checkUpdate(true).then(setUpdate)}
-                onDismiss={() => setUpdateDismissed(true)}
-                /* 点「查看更新」落到「关于与版本」页，而不是把用户扔进浏览器 */
-                onOpenAbout={focusUpdate}
-                compact
-              />
-            </div>
-          )}
-
           <Page />
 
           {errorText && (

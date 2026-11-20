@@ -74,15 +74,14 @@ export function coreSlice(
     setPage: (page) => set({ activePage: page }),
 
     /*
-     * 顶部「有新版本」横幅的「查看更新」走这里。
+     * 「查看更新 / 更新详情」统一走这里。
      *
-     * 以前是直接 shell.openExternal 打开 GitHub 发布页 —— 用户被扔到浏览器里，
-     * 还得自己分辨哪个是安装包、下完再回来手动运行。现在统一落到「关于与版本」页，
-     * 那一页本来就有带真实进度的应用内下载（下完直接启动安装器）。
-     *
-     * 序号自增是为了让 AboutPage 的副作用每次都触发：连点两次也能重新滚回去。
+     * 以前落到独立的「关于与版本」页；现在那一页并进了设置页，
+     * 更新区块在「外观」下面 —— 序号自增是为了让设置页的副作用每次都触发：
+     * 连点两次也能重新滚回去。
      */
-    focusUpdate: () => set((s) => ({ activePage: 'about', updateFocusSeq: s.updateFocusSeq + 1 })),
+    focusUpdate: () =>
+      set((s) => ({ activePage: 'preferences', updateFocusSeq: s.updateFocusSeq + 1 })),
 
     setTheme: async (theme) => {
       // 先把界面换掉 —— 这一步不依赖磁盘，永远会成功。

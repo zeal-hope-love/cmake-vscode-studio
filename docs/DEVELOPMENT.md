@@ -224,6 +224,33 @@ node tools/run-ts.mjs tools/scan.ts <工程路径>
 
   它会加载 → 执行 JS → 截图 → 自动退出。只有显式设置环境变量时才生效，正常使用不受影响。
 
+  另外 `CFGSTUDIO_FAKE_UPDATE=ready|downloading|available|error` 可以**伪造一份更新状态**
+  （不联网、不下载），用来核对标题栏更新芯片和设置页更新区块的版式 ——
+  这两块只在真有新版本时才渲染，仓库还没发版时本地复现不出来。
+
+### 4.1 标题栏右端（原生窗口按钮）怎么核对
+
+`capturePage()` 只拍网页内容 —— 最小化/最大化/关闭那三个按钮属于窗口的**非客户区**，
+由系统画在网页之上，截图里根本看不到。它们背后的底色是 `titleBarOverlay` 给的原生色块，
+和网页里的 `.titlebar` 底色不一致就会出现「按钮那块比旁边深一档」的接缝。
+
+要拍这一小块真实屏幕内容：
+
+```powershell
+$env:CFGSTUDIO_SHOT_CHROME = "C:\temp\chrome.png"   # 300×46，标题栏右端
+.\release\win-unpacked\CMake-VScode-Studio.exe
+```
+
+不用再设 `CFGSTUDIO_SHOT`，两者互不依赖。它会先用 `desktopCapturer` 抓屏，
+再按窗口 bounds（乘 scaleFactor）裁出标题栏右端那一块。
+
+配套的两条约束写在代码注释里，别拆开看：
+
+- `THEME_COLORS[*].bar` 必须等于 CSS 的 `--bg-elevated`（`.titlebar` 的底色），
+  **不是** `--bg`；主进程读不到 CSS 变量，这两处只能手工对齐
+- 标题栏的下边框画在 `.body` 的 `border-top` 上，不在 `.titlebar` 上 ——
+  画在 38px 之内会被那块原生色块整段遮掉，线会「走到按钮底下就断」
+
 ### 5. 本项目的调试截图脚本
 
 要一次把 8 个页面都截下来：
@@ -557,7 +584,7 @@ CI 上尤其建议开，防止"配置漏了但打包成功"。
 | 显示在哪 | 取值来源 |
 | --- | --- |
 | 标题栏的小徽章 `v1.0.0` | `app.getVersion()` |
-| 「?」→ 最后一步「关于与版本」 | 同上，另附 Electron / Chromium / Node 版本 |
+| 「?」→ 最后一步「版本与运行环境」 | 同上，另附 Electron / Chromium / Node 版本 |
 | exe 属性 → 文件版本 / 产品版本 | 打包时 electron-builder 读同一个字段 |
 | 打包产物文件名 `...-1.0.0-x64.exe` | `artifactName` 模板里的 `${version}` |
 

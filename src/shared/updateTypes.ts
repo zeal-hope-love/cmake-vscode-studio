@@ -59,3 +59,51 @@ export interface DownloadProgress {
   /** 估算速度（字节/秒） */
   speed: number
 }
+
+/**
+ * 更新流程的阶段。
+ *
+ * 这套阶段由**主进程**维护（见 services/update/updateService.ts），
+ * 渲染进程只是订阅 —— 因为它描述的是「这台机器上真实的更新状态」：
+ * 文件下到哪了、能不能一键重启安装。放在渲染进程里的话，
+ * 窗口一重载（F5 / 崩溃恢复）就全丢了，界面上会莫名其妙回到「一切正常」。
+ */
+export type UpdatePhase =
+  /** 还没查过 */
+  | 'idle'
+  /** 正在请求 GitHub */
+  | 'checking'
+  /** 查过了，已是最新 */
+  | 'up-to-date'
+  /** 有新版本，但还没下载（自动下载关了，或上次下载失败/被取消） */
+  | 'available'
+  /** 正在下载安装包 */
+  | 'downloading'
+  /** 安装包已就位，等用户重启安装 */
+  | 'ready'
+  /** 检查或下载失败 */
+  | 'error'
+  /** 用户在设置里关了自动检查 */
+  | 'disabled'
+
+/** 主进程维护的完整更新状态，界面所有地方都读这一份 */
+export interface UpdateState {
+  phase: UpdatePhase
+  /** 上一次检测结果（没查过时是 null） */
+  info: UpdateInfo | null
+  /** 下载进度（只在 phase = downloading 时有值） */
+  progress: DownloadProgress | null
+  /** 已下载（或上次已下好）的安装包绝对路径 */
+  filePath: string | null
+  /** 安装包对应的版本号 —— 「重启更新到 vX」的文案用它 */
+  readyVersion: string | null
+  /**
+   * 能不能一键「重启安装」。
+   *
+   * 只有自绘安装器（*-setup.exe）能这么干；Release 里只有免安装版时
+   * 下下来也只能提示用户自己去替换，所以这里要区分开。
+   */
+  canInstall: boolean
+  /** 出错原因（phase = error 时有值） */
+  error?: string
+}

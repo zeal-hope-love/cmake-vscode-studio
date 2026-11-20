@@ -2,16 +2,28 @@
  * Electron 主进程入口。
  */
 
-import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, desktopCapturer, ipcMain, nativeTheme, screen, shell } from 'electron'
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { IPC, type AppSettings } from '@shared/types'
 import { registerIpc, stopAllRuns } from './ipc/index'
 import { getSettings, saveSettings } from './services/data/settingsStore'
+import { initUpdateService } from './services/update/updateService'
 
-const THEME_COLORS: Record<'dark' | 'light', { bg: string; fg: string }> = {
-  dark: { bg: '#0f1216', fg: '#cbd5e1' },
-  light: { bg: '#f4f6f9', fg: '#334155' }
+/*
+ * 窗口级配色，**必须和 global.css 的变量对齐**（这里是主进程，读不到 CSS）。
+ *
+ *   bg  —— --bg，窗口底色
+ *   bar —— --bg-elevated，标题栏底色（.titlebar 的 background）
+ *   fg  —— 最小化/最大化/关闭那三个图标符号的颜色
+ *
+ * 标题栏覆盖层（titleBarOverlay）一定要用 bar 而不是 bg：
+ * 那三个原生按钮画在网页之上的一整块底色上，用 bg 会在标题栏右端
+ * 露出一条比周围深一档的矩形 —— 就是「窗口按钮背后颜色不一样」的由来。
+ */
+const THEME_COLORS: Record<'dark' | 'light', { bg: string; bar: string; fg: string }> = {
+  dark: { bg: '#0f1216', bar: '#161b22', fg: '#cbd5e1' },
+  light: { bg: '#f4f6f9', bar: '#ffffff', fg: '#334155' }
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -126,7 +138,7 @@ function applyWindowTheme(theme: AppSettings['theme']): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setBackgroundColor(colors.bg)
     try {
-      mainWindow.setTitleBarOverlay({ color: colors.bg, symbolColor: colors.fg, height: 38 })
+      mainWindow.setTitleBarOverlay({ color: colors.bar, symbolColor: colors.fg, height: 38 })
     } catch {
       /* 某些平台不支持标题栏覆盖层，忽略即可 */
     }
@@ -157,7 +169,7 @@ function createWindow(): void {
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: colors.bg,
+      color: colors.bar,
       symbolColor: colors.fg,
       height: 38
     },
@@ -207,10 +219,19 @@ function createWindow(): void {
  *   CFGSTUDIO_SHOT=<输出 png 路径>
  *   CFGSTUDIO_SHOT_JS=<截图前在页面里执行的 JS>     可选
  *   CFGSTUDIO_SHOT_DELAY=<毫秒，默认 3500>          可选
+ *   CFGSTUDIO_SHOT_CHROME=<输出 png 路径>           可选
+ *
+ * 最后那个是拍**窗口标题栏右端**（最小化/最大化/关闭那三个原生按钮所在的一小块）。
+ *
+ * 为什么不能只靠 capturePage：那三个按钮属于窗口的非客户区，由系统画在网页之上，
+ * `capturePage()` 里根本没有它们。而它们背后那块底色是 titleBarOverlay 给的原生色块，
+ * 一旦跟网页里 .titlebar 的底色不一致，就会出现「按钮那块比旁边深一档」的接缝 ——
+ * 这种问题只能拍真实桌面才看得见。
  */
 function installScreenshotHook(win: BrowserWindow): void {
   const shotPath = process.env['CFGSTUDIO_SHOT']
-  if (!shotPath) return
+  const chromePath = process.env['CFGSTUDIO_SHOT_CHROME']
+  if (!shotPath && !chromePath) return
 
   const delay = Number(process.env['CFGSTUDIO_SHOT_DELAY'] ?? 3500)
   const script = process.env['CFGSTUDIO_SHOT_JS']
@@ -223,15 +244,54 @@ function installScreenshotHook(win: BrowserWindow): void {
           console.log(`[screenshot] JS 执行结果: ${JSON.stringify(result)}`)
           await new Promise((r) => setTimeout(r, 900))
         }
-        const image = await win.webContents.capturePage()
-        writeFileSync(shotPath, image.toPNG())
-        console.log(`[screenshot] 已保存: ${shotPath}`)
+        if (shotPath) {
+          const image = await win.webContents.capturePage()
+          writeFileSync(shotPath, image.toPNG())
+          console.log(`[screenshot] 已保存: ${shotPath}`)
+        }
+        if (chromePath) {
+          writeFileSync(chromePath, (await captureChrome(win)).toPNG())
+          console.log(`[screenshot] 已保存窗口按钮区: ${chromePath}`)
+        }
       } catch (err) {
         console.error('[screenshot] 失败:', err)
       } finally {
         app.quit()
       }
     }, delay)
+  })
+}
+
+/**
+ * 截「标题栏右端 300px」那一小块真实屏幕内容（含系统画的三个窗口按钮）。
+ *
+ * 坐标要乘 scaleFactor：desktopCapturer 给的是物理像素，而窗口 bounds 是 DIP。
+ * 窗口可能被拖到副屏，所以按窗口当前位置去挑屏幕，而不是死用主屏。
+ */
+async function captureChrome(win: BrowserWindow): Promise<Electron.NativeImage> {
+  const bounds = win.getBounds()
+  const display = screen.getDisplayMatching(bounds)
+  const scale = display.scaleFactor
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: {
+      width: Math.round(display.size.width * scale),
+      height: Math.round(display.size.height * scale)
+    }
+  })
+  const full = sources[0]?.thumbnail
+  if (!full) throw new Error('拿不到屏幕画面')
+
+  const stripW = Math.min(300, bounds.width)
+  const stripH = 46
+  // 屏幕图像的原点是整个虚拟桌面的左上角，所以要减掉这块屏幕自己的偏移
+  const x = Math.round((bounds.x + bounds.width - stripW - display.bounds.x) * scale)
+  const y = Math.round((bounds.y - display.bounds.y) * scale)
+  return full.crop({
+    x: Math.max(0, x),
+    y: Math.max(0, y),
+    width: Math.round(stripW * scale),
+    height: Math.round(stripH * scale)
   })
 }
 
@@ -285,14 +345,20 @@ app.whenReady().then(() => {
     try {
       saveSettings({ theme })
     } catch (err) {
-      console.warn(
-        '[theme] 配色偏好没存上（不影响使用）：',
-        err instanceof Error ? err.message : err
-      )
+      console.warn('[theme] 配色偏好没存上（不影响使用）：', err instanceof Error ? err.message : err)
     }
   })
 
   createWindow()
+
+  /*
+   * 更新检查放到窗口建好之后 —— 它自己会再等 4 秒才发请求。
+   *
+   * 在这里启动（而不是渲染进程 useEffect 里）有两个好处：
+   *   · 窗口重载 / 关掉再开都不会重复检查，也不会把下载进度搞丢；
+   *   · 「下好了没装」的状态跨启动还在（安装包在 downloads/ 里）。
+   */
+  initUpdateService()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

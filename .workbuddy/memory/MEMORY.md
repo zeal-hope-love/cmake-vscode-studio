@@ -112,3 +112,24 @@ icacls "C:\Users\PoXia\Desktop\DSH_Workspace" /remove:d Everyone
 **文字与方框对齐不要按字体比例猜**：用 canvas `measureText` 的
 `actualBoundingBox*` 量墨迹，`fontBoundingBox*` 反推基线位置，
 再用 4 倍 DPR 截图做行像素统计验证。
+
+## 更新流程：状态归主进程，界面只做镜像
+
+`main/services/update/updateService.ts` 是 `UpdateState` 的**唯一持有者**
+（phase / progress / filePath / readyVersion / canInstall），每次变化整份广播
+（`IPC.updateState`），窗口重载后 `getUpdateState()` 拉一次就复原。
+不要再把「查更新」「下载进度」放渲染进程 —— 那样一重载进度就断了。
+
+- 启动 4s 后自动查，每 6h 再查；`checkUpdates=false` ⇒ disabled
+- 有新版本**自动下载**（`autoDownloadUpdates`，默认开），`findDownloaded()` 认
+  `userData/downloads/` 里同版本 >1MB 的 exe，避免第二次启动重下 100MB
+- 只有 `*-setup.exe` 能 `canInstall`（一键「重启更新」）；portable 只能手动替换
+- `installNow()` = 起安装器 + 延迟 600ms `app.quit()`（不退出装不上）
+- 版面核对用 `CFGSTUDIO_FAKE_UPDATE=ready|downloading|available|error`，
+  配合 `CFGSTUDIO_SHOT` 截图；不联网也能看到芯片/面板
+
+**标题栏弹层（`.update-pop`）必须自带 `-webkit-app-region: no-drag`** ——
+它伸出标题栏之外，否则被当作拖拽区，按钮点不动。
+
+**设置页（PageKey `preferences`）= 外观 + 版本更新 + 关于**（关于放最后）。
+原来的独立「关于与版本」页和标题栏主题下拉都已并进来，别再各加一处。

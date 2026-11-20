@@ -24,6 +24,7 @@ import type {
 } from '@shared/types'
 import type { PackManifest } from '@shared/packTypes'
 import type { DebugTargetKey } from '@shared/types'
+import type { UpdateState } from '@shared/updateTypes'
 
 export type PageKey =
   | 'project'
@@ -39,7 +40,8 @@ export type PageKey =
   | 'probe'
   | 'tools'
   | 'history'
-  | 'about'
+  /** 应用设置：外观（主题）、版本更新、关于。以前「关于与版本」是独立一页 */
+  | 'preferences'
 
 /**
  * 没选工程时，由外壳直接挡住、**不渲染页面**的那些页。
@@ -123,6 +125,19 @@ export interface StudioState {
    */
   updateFocusSeq: number
   /**
+   * 当前的更新状态（主进程唯一持有，这里只是镜像）。
+   *
+   * 放全局 store 而不是某个组件里，是因为**三个地方要同时显示**：
+   * 标题栏芯片、设置页的更新区块、（下载完的）提示。各存一份必然对不上。
+   */
+  updateState: UpdateState | null
+  /**
+   * 用户点了「稍后」的那一版。
+   *
+   * 按版本号记，不按布尔：这一版关掉之后，下一版出来还得提示。
+   */
+  updateDismissedVersion: string | null
+  /**
    * 本次会话里已经写入过配置的工程（小写路径）。
    *
    * 用集合而不是一个布尔值：之前是布尔，写完 A 工程再切到 B 工程时，
@@ -133,8 +148,21 @@ export interface StudioState {
   // ---- 动作 ----
   bootstrap: () => Promise<void>
   setPage: (page: PageKey) => void
-  /** 切到「关于与版本」并把更新卡片滚进视野（顶部更新横幅的「查看更新」用） */
+  /** 切到「设置 → 版本更新」并把更新卡片滚进视野（标题栏芯片 / 提示的「详情」用） */
   focusUpdate: () => void
+
+  // ---- 更新 ----
+  /** 订阅主进程推送的更新状态，顺带拉一次当前值。返回取消订阅函数 */
+  bindUpdateState: () => () => void
+  /** 立刻检查（force=true 忽略 6 小时缓存） */
+  checkUpdateNow: (force?: boolean) => Promise<void>
+  /** 手动下载 / 重试（自动下载关闭，或上次失败时用） */
+  downloadUpdateNow: () => Promise<void>
+  cancelUpdateDownload: () => Promise<void>
+  /** 启动安装器并退出应用 */
+  installUpdate: () => Promise<void>
+  /** 本次不再提示这一版 */
+  dismissUpdate: () => void
   setTheme: (theme: AppSettings['theme']) => Promise<void>
   /**
    * 保存任意设置项并同步到 store。

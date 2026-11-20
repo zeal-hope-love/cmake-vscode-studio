@@ -8,7 +8,17 @@
   --bg-elevated: #161b22;
   --bg-raised: #1c232c;
   --bg-input: #11161c;
+  /* 比 --bg 再深一档的「凹陷面」：进度条槽、代码块、说明块用它。
+     以前只被引用、没有定义，实际渲染成了透明 —— 顺手补上。 */
+  --bg-sunken: #0b0e12;
   --bg-hover: #222b35;
+  /* 标题栏更新芯片：下载中整块变成蓝色量杯，左边「已下载」一段、右边「还没下」一段，
+     只用明暗分界表示进度，不再画细进度条。
+     深色主题下**左边用亮的**：深底上亮色才是往前走的那一段，反过来会像挖了个洞。
+     浅色主题正好相反，左边用深蓝（见下面 light 覆盖）。 */
+  --chip-track: #16283f;
+  --chip-track-edge: #2a4463;
+  --chip-fill: #3d74b0;
   --border: #232a33;
   --border-strong: #2f3945;
   --text: #e6edf3;
@@ -46,7 +56,12 @@ html[data-theme='light'] {
   --bg-elevated: #ffffff;
   --bg-raised: #f8fafc;
   --bg-input: #ffffff;
+  --bg-sunken: #eef2f7;
   --bg-hover: #eef2f7;
+  /* 浅色下左边用深蓝：白底上深色才往前走（深色主题是反过来的，见 :root） */
+  --chip-track: #dbeafe;
+  --chip-track-edge: #b9d4f5;
+  --chip-fill: #8fbdf5;
   --border: #e2e8f0;
   --border-strong: #cbd5e1;
   --text: #0f172a;
@@ -131,7 +146,14 @@ textarea {
   gap: 10px;
   padding: 0 12px 0 14px;
   background: var(--bg-elevated);
-  border-bottom: 1px solid var(--border);
+  /*
+   * 分隔线交给下面的 .body 用 border-top 画，这里不画 border-bottom。
+   *
+   * 标题栏右端约 140px 被 titleBarOverlay（原生层）盖住，那块是系统画的纯色矩形；
+   * border 在 38px 以内会被它整块遮掉 —— 于是分隔线走到窗口按钮底下就断了，
+   * 看着像「线画到一半停了」。挪到 .body 的顶边（38px 之外、覆盖层下面），
+   * 整条线才能从左通到右。
+   */
   -webkit-app-region: drag;
   user-select: none;
 }
@@ -166,23 +188,7 @@ textarea {
   background: var(--bg-raised);
 }
 
-/* 主题下拉：图标 + 紧凑的 select */
-.theme-select {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--text-muted);
-}
-
-.theme-select .select {
-  height: 26px;
-  padding: 0 22px 0 8px;
-  font-size: 12px;
-  border-radius: 7px;
-  background-color: var(--bg-raised);
-  width: auto;
-  min-width: 96px;
-}
+/* 主题下拉的样式已随控件一起挪到设置页（见 .settings-theme），这里不再保留 */
 
 .titlebar__path {
   color: var(--text-muted);
@@ -221,10 +227,258 @@ textarea {
   padding-right: 140px;
 }
 
+/* ---------------------------------------------------------------------------
+   标题栏更新芯片 + 快捷面板
+   ---------------------------------------------------------------------------
+   位置在「最小化 / 最大化 / 关闭」左边（靠的是 .titlebar__actions 的
+   padding-right）。做成胶囊而不是方块：紧邻三个方形窗口按钮时，
+   方块会看着像第四个按钮。
+   --------------------------------------------------------------------------- */
+.update-chip-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.update-chip {
+  position: relative;
+  /* 让负 z-index 的填充层只和芯片自己的背景比层级：
+     填充要盖住芯片底色、但必须压在文字下面 */
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    color 0.15s var(--ease-out),
+    background 0.15s var(--ease-out),
+    border-color 0.15s var(--ease-out);
+}
+
+.update-chip:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+/*
+ * 下载中：整块芯片就是一个蓝色量杯。
+ *
+ * 文字用满强度的 --text 而不是默认的灰 —— 它要同时压在两档蓝上，
+ * 浅灰字在深蓝那半边会糊掉。
+ */
+.update-chip--busy {
+  background: var(--chip-track);
+  border-color: var(--chip-track-edge);
+  color: var(--text);
+}
+
+.update-chip--busy:hover {
+  background: var(--chip-track);
+  border-color: var(--chip-track-edge);
+  color: var(--text);
+}
+
+/* 下载完可重启：唯一一个用实色的状态 —— 这是真需要动手的信号 */
+.update-chip--ready {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.update-chip--ready:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: #fff;
+}
+
+.update-chip--err {
+  color: var(--err);
+  border-color: var(--err);
+  background: var(--err-soft);
+}
+
+.update-chip__icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+/*
+ * 芯片即进度槽：左边一段深色按百分比铺开，右边保持浅色。
+ *
+ * 之前是压在底边的 2px 细条 —— 24px 高的药丸里，2px 实在太细，
+ * 余光扫过去只能看出「有东西在动」，看不出「还要等多久」。
+ * 现在用底色深浅占位，整块芯片的宽度就是进度条长度，一眼能量出来。
+ *
+ * 用负 z-index 而不是给文字加 relative：这样填充永远在文字底下，
+ * 不管以后往芯片里塞几个元素。
+ */
+.update-chip__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: -1;
+  background: var(--chip-fill);
+  /* 不做圆角：右边缘要是一条直的切线，才读得出「进度到这儿了」；
+     左边两个角交给芯片自己的 overflow:hidden 裁成药丸弧 */
+  pointer-events: none;
+  transition: width 0.25s linear;
+}
+
+/* 总大小未知（服务端没给 Content-Length）：来回涨落表示还在动，不假装知道进度 */
+.update-chip__fill--indet {
+  animation: cv-chip-fill 1.5s var(--ease-inout) infinite;
+}
+
+@keyframes cv-chip-fill {
+  0%,
+  100% {
+    width: 18%;
+  }
+  50% {
+    width: 78%;
+  }
+}
+
+/* ---- 快捷面板 ---- */
+.update-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 360px;
+  max-height: 70vh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
+  z-index: 80;
+  cursor: default;
+  user-select: text;
+  /* 面板伸出标题栏之外，得自己声明可交互 —— 否则整块区域被当成拖拽区，点不动 */
+  -webkit-app-region: no-drag;
+  animation: cv-pop-in 0.14s var(--ease-out);
+}
+
+@keyframes cv-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.update-pop__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.update-pop__title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.update-pop__close {
+  margin-left: auto;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 5px;
+}
+
+.update-pop__close:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.update-pop__block {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  margin-bottom: 10px;
+}
+
+.update-pop__bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.update-pop__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+
+.update-pop__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.update-pop__notes {
+  margin-top: 10px;
+}
+
+.update-pop__notes summary {
+  cursor: pointer;
+}
+
+.update-pop__notes pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 180px;
+  overflow: auto;
+  background: var(--bg-sunken);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  margin: 6px 0 0;
+  font-family: inherit;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.update-pop__foot {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
 .body {
   flex: 1;
   display: flex;
   min-height: 0;
+  /* 标题栏的分隔线（见 .titlebar 注释）：必须在 38px 之外，才不会被原生覆盖层遮住 */
+  border-top: 1px solid var(--border);
 }
 
 .sidebar {
